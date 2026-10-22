@@ -94,6 +94,23 @@ class DraftBot(discord.Client):
         ping = role.mention if role else "(aucun rôle à ce nom)"
         return fmt.on_the_clock(pick, ping, self.store.deadline(guild.id))
 
+    async def announce(self, guild: discord.Guild, text: str, with_clock: bool = True) -> str:
+        """Publie un message dans le salon des sélections, en mentionnant l'équipe au tour.
+
+        Retourne une phrase à ajouter à la réponse privée de l'admin.
+        """
+        channels = self.channels(guild)
+        if channels is None:
+            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (refais `/draft-salons`)."
+        if with_clock:
+            text += "\n" + self.on_the_clock(guild)
+        try:
+            await channels[1].send(text, allowed_mentions=PINGS)
+        except discord.HTTPException:
+            log.exception("Annonce impossible sur le serveur %s", guild.id)
+            return f"\n⚠️ L'annonce dans {channels[1].mention} a échoué. Vérifie les permissions du bot."
+        return f"\n📣 Annoncé dans {channels[1].mention}."
+
     def backup(self, reason: str) -> None:
         """Copie la base dans le dossier des sauvegardes et garde les plus récentes."""
         try:
@@ -373,8 +390,8 @@ def register_commands(bot: DraftBot) -> None:
                 channels = bot.channels(interaction.guild)
                 if channels and store.list_messages(guild_id):
                     await bot.refresh_list(guild_id, channels[0])
-            text = f"✅ {len(order)} choix, {per_round} équipes par ronde.\n" + bot.on_the_clock(interaction.guild)
-            await reply(button_interaction, text)
+                announced = await bot.announce(interaction.guild, "🏒 **Le draft commence!**")
+            await reply(button_interaction, f"✅ {len(order)} choix, {per_round} équipes par ronde." + announced)
 
         text = f"Définir un ordre de **{len(order)} choix** pour {len(teams)} équipes : {', '.join(teams)} ?"
         if missing:
@@ -394,17 +411,24 @@ def register_commands(bot: DraftBot) -> None:
         if seconds is None:
             await reply(interaction, "Délai non reconnu. Écris par exemple `8h`, `90m` ou `1h30`.")
             return
+        await interaction.response.defer(ephemeral=True)
+        announced = ""
         async with bot.locks[interaction.guild_id]:
             store.set_timer(interaction.guild_id, seconds, admin.id if admin else None)
             store.add_log(interaction.guild_id, interaction.user.id, "délai",
                           fmt.duration_text(seconds) if seconds else "aucun")
+            # Pendant un draft, l'équipe au tour voit tout de suite son nouveau temps limite.
+            if store.current_pick(interaction.guild_id) is not None:
+                notice = (f"⌛ Nouveau délai : **{fmt.duration_text(seconds)}** par choix." if seconds
+                          else "⌛ Il n'y a plus de délai par choix.")
+                announced = await bot.announce(interaction.guild, notice)
         if seconds == 0:
-            await reply(interaction, "✅ Aucun délai par choix.")
+            await reply(interaction, "✅ Aucun délai par choix." + announced)
             return
         text = f"✅ Délai de **{fmt.duration_text(seconds)}** par choix. Le chrono du choix en cours repart à zéro."
         text += f"\n{admin.mention} sera mentionné quand le temps est écoulé." if admin else (
             "\n⚠️ Aucun rôle admin choisi : l'alerte ne mentionnera personne.")
-        await reply(interaction, text)
+        await reply(interaction, text + announced)
 
     @tree.command(name="draft-echange", description="Donner un choix à une autre équipe")
     @app_commands.describe(numero="Numéro du choix (voir /draft-statut)", equipe="Nouvelle équipe propriétaire")
@@ -427,8 +451,16 @@ def register_commands(bot: DraftBot) -> None:
                     return
                 store.add_log(guild_id, interaction.user.id, "échange",
                               f"#{numero} : {pick.team} → {team_display(equipe)}")
+                current = store.current_pick(guild_id)
+                announced = await bot.announce(
+                    interaction.guild,
+                    f"🔁 **Échange** : le {fmt.pick_label(pick)} de **{escape_markdown(pick.team)}** "
+                    f"appartient maintenant à **{escape_markdown(team_display(equipe))}**.",
+                    # Si c'est le choix en cours, la nouvelle équipe est mentionnée tout de suite.
+                    with_clock=current is not None and current.number == numero,
+                )
             await reply(button_interaction,
-                        f"✅ Le choix #{numero} appartient maintenant à **{team_display(equipe)}**.")
+                        f"✅ Le choix #{numero} appartient maintenant à **{team_display(equipe)}**." + announced)
 
         await ask_confirmation(
             interaction,
