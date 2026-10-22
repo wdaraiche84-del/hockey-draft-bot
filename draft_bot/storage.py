@@ -51,6 +51,18 @@ def normalize(text: str) -> str:
     return " ".join(text.casefold().split())
 
 
+def team_display(name: str) -> str:
+    """Met une majuscule aux noms d'équipes tapés tout en minuscules.
+
+    « laval » devient « Laval » et « mtl » devient « MTL ». Un nom qui
+    contient déjà une majuscule est gardé tel quel.
+    """
+    name = " ".join(name.split())
+    if name != name.lower():
+        return name
+    return name.upper() if len(name) <= 3 else name.title()
+
+
 @dataclass
 class Player:
     id: int
@@ -164,7 +176,7 @@ class Store:
             self.db.executemany(
                 "INSERT INTO picks (guild_id, number, round, in_round, team) VALUES (?, ?, ?, ?, ?)",
                 [
-                    (guild_id, i + 1, i // per_round + 1, i % per_round + 1, team)
+                    (guild_id, i + 1, i // per_round + 1, i % per_round + 1, team_display(team))
                     for i, team in enumerate(teams)
                 ],
             )
@@ -232,7 +244,7 @@ class Store:
         with self.db:
             cur = self.db.execute(
                 "UPDATE picks SET team = ? WHERE guild_id = ? AND number = ? AND player_id IS NULL",
-                (team, guild_id, number),
+                (team_display(team), guild_id, number),
             )
         return cur.rowcount == 1
 

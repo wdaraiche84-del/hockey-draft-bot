@@ -70,3 +70,10 @@ def test_gm_team_names_are_case_insensitive():
     store.set_gm(1, "mtl", 42)
     assert store.gm_for(1, "MTL") == 42
     assert store.gm_for(1, "TOR") is None
+
+
+def test_team_names_get_capitalized():
+    store = make_store(order=["laval", "granby", "mtl", "Trois-Rivières"])
+    assert [p.team for p in store.upcoming_picks(1, 4)] == ["Laval", "Granby", "MTL", "Trois-Rivières"]
+    store.transfer_pick(1, 1, "sherbrooke")
+    assert store.get_pick(1, 1).team == "Sherbrooke"

@@ -10,7 +10,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from . import formatting as fmt
-from .storage import Store
+from .storage import Store, team_display
 
 log = logging.getLogger("draft_bot")
 
@@ -171,7 +171,7 @@ def register_commands(bot: DraftBot) -> None:
     @admin
     async def draft_dg(interaction: discord.Interaction, equipe: str, membre: discord.Member) -> None:
         store.set_gm(interaction.guild_id, equipe, membre.id)
-        await reply(interaction, f"✅ {membre.mention} est le DG de **{equipe}**.")
+        await reply(interaction, f"✅ {membre.mention} est le DG de **{team_display(equipe)}**.")
 
     @tree.command(name="draft-echange", description="Donner un choix à une autre équipe")
     @app_commands.describe(numero="Numéro du choix (ex. : 12)", equipe="Nouvelle équipe propriétaire")
@@ -179,7 +179,7 @@ def register_commands(bot: DraftBot) -> None:
     @admin
     async def draft_echange(interaction: discord.Interaction, numero: int, equipe: str) -> None:
         if store.transfer_pick(interaction.guild_id, numero, equipe):
-            await reply(interaction, f"✅ Le choix #{numero} appartient maintenant à **{equipe}**.")
+            await reply(interaction, f"✅ Le choix #{numero} appartient maintenant à **{team_display(equipe)}**.")
         else:
             await reply(interaction, f"Le choix #{numero} n'existe pas ou a déjà été fait.")
 
