@@ -9,7 +9,7 @@ Bot Discord qui gère le draft de ligues EHM / SHM. Ce projet est indépendant d
 - Quand c'est le tour d'une équipe, le bot mentionne son rôle dans le salon **sélections**.
 - Un membre qui a ce rôle fait `/draft <joueur>`, puis clique **Confirmer**.
 - Le joueur disparaît de la liste, le choix est annoncé et l'équipe suivante est mentionnée.
-- Avec `/draft-temps`, un délai s'affiche pour chaque choix. Une fois le délai écoulé, le bot mentionne le rôle admin, qui peut choisir avec `/forcedraft`.
+- Avec `/delai`, un délai s'affiche pour chaque choix. Une fois le délai écoulé, le bot mentionne le rôle admin, qui peut choisir avec `/forcedraft`.
 
 Les réponses du bot aux commandes sont privées : le salon de la liste reste propre.
 
@@ -17,16 +17,16 @@ Les réponses du bot aux commandes sont privées : le salon de la liste reste pr
 
 | Commande | Qui | Rôle |
 | --- | --- | --- |
-| `/draft-salons liste selections` | Admin | Choisir les deux salons |
-| `/draft-liste fichier` | Admin | Importer les joueurs et publier la liste |
-| `/draft-ordre equipes rondes serpentin` | Admin | Définir l'ordre (ou `fichier` avec l'ordre complet, une équipe par ligne) |
-| `/draft-temps delai admin` | Admin | Délai par choix (`8h`, `90m`, `1h30`, `0` pour aucun) et rôle à avertir |
-| `/draft-echange numero equipe` | Admin | Donner un choix à une autre équipe |
+| `/salons liste selections` | Admin | Choisir les deux salons |
+| `/joueurs fichier` | Admin | Importer les joueurs et publier la liste |
+| `/ordre equipes rondes serpentin` | Admin | Définir l'ordre (ou `fichier` avec l'ordre complet, une équipe par ligne) |
+| `/delai delai admin` | Admin | Délai par choix (`8h`, `90m`, `1h30`, `0` pour aucun) et rôle à avertir |
+| `/echange numero equipe` | Admin | Donner un choix à une autre équipe |
 | `/draft joueur` | Équipe au tour | Repêcher un joueur |
 | `/forcedraft joueur` | Admin | Repêcher pour l'équipe au tour |
-| `/draft-annuler` | Admin | Annuler le dernier choix |
-| `/draft-statut` | Tous | Voir qui est au tour, le temps limite et les prochains choix |
-| `/draft-journal` | Admin | Télécharger le journal de toutes les actions (fichier Excel/CSV) |
+| `/annuler-choix` | Admin | Annuler le dernier choix |
+| `/statut` | Tous | Voir qui est au tour, le temps limite et les prochains choix |
+| `/journal` | Admin | Télécharger le journal de toutes les actions (fichier Excel/CSV) |
 
 « Admin » veut dire la permission *Gérer le serveur*, vérifiée à chaque utilisation. Toute action qui change le draft demande une confirmation par bouton.
 
@@ -57,7 +57,7 @@ Réimporter la liste ou redéfinir l'ordre remet le draft à zéro. Le bot deman
 
 - **Un choix à la fois** : le bot revérifie, au moment du clic sur Confirmer, que c'est encore le tour de ce choix, que le membre a encore le rôle et que le joueur est encore disponible. Deux confirmations en même temps ne peuvent pas prendre le même joueur ni sauter un tour.
 - **Rien ne se perd au redémarrage** : le draft, le chrono et le journal sont dans la base `draft.db`. Une alerte de délai manquée pendant que le bot était éteint part dès son retour.
-- **Sauvegardes automatiques** dans le dossier `sauvegardes` : au démarrage, chaque heure, et avant chaque `/draft-liste` ou `/draft-ordre`. Les 48 plus récentes sont gardées. Pour revenir en arrière, arrêter le bot, remplacer `draft.db` par une sauvegarde renommée `draft.db`, puis relancer.
+- **Sauvegardes automatiques** dans le dossier `sauvegardes` : au démarrage, chaque heure, et avant chaque `/joueurs` ou `/ordre`. Les 48 plus récentes sont gardées. Pour revenir en arrière, arrêter le bot, remplacer `draft.db` par une sauvegarde renommée `draft.db`, puis relancer.
 - **Serveurs autorisés** : le bot quitte tout seul un serveur qui n'est pas dans `GUILD_IDS`. Les commandes y sont publiées serveur par serveur, et les anciennes commandes globales sont effacées au démarrage pour éviter les doublons.
 
 ## Installation
@@ -74,7 +74,7 @@ copy .env.example .env        # puis remplir DISCORD_TOKEN et GUILD_IDS
 python -m draft_bot
 ```
 
-6. Dans Discord : `/draft-salons`, `/draft-liste`, `/draft-ordre`, puis `/draft-temps` si on veut un délai.
+6. Dans Discord : `/salons`, `/joueurs`, `/ordre`, puis `/delai` si on veut un délai.
 
 ### Ajouter un serveur autorisé
 

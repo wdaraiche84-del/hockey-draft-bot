@@ -125,7 +125,7 @@ class DraftBot(discord.Client):
         """
         channels = self.channels(guild)
         if channels is None:
-            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (refais `/draft-salons`)."
+            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (refais `/salons`)."
         if with_clock:
             text += "\n" + self.on_the_clock(guild)
         try:
@@ -322,7 +322,7 @@ def register_commands(bot: DraftBot) -> None:
             return ""
         return f"\n⚠️ **{made} choix déjà faits seront effacés.** Une sauvegarde sera faite avant."
 
-    @tree.command(name="draft-salons", description="Choisir le salon de la liste et le salon des sélections")
+    @tree.command(name="salons", description="Choisir le salon de la liste et le salon des sélections")
     @app_commands.describe(liste="Salon où le bot affiche les joueurs disponibles",
                            selections="Salon où le bot annonce chaque choix")
     @app_commands.guild_only()
@@ -345,14 +345,14 @@ def register_commands(bot: DraftBot) -> None:
         store.add_log(interaction.guild_id, interaction.user.id, "salons", f"{liste.name} / {selections.name}")
         await reply(interaction, f"✅ Liste dans {liste.mention}, sélections dans {selections.mention}.")
 
-    @tree.command(name="draft-liste", description="Importer les joueurs repêchables et publier la liste")
+    @tree.command(name="joueurs", description="Importer les joueurs repêchables et publier la liste")
     @app_commands.describe(fichier="Fichier CSV ou texte : nom, équipe actuelle, position (une ligne par joueur)")
     @app_commands.guild_only()
     @admin_only
     async def draft_liste(interaction: discord.Interaction, fichier: discord.Attachment) -> None:
         guild_id = interaction.guild_id
         if not bot.channels(interaction.guild):
-            await reply(interaction, "Configure d'abord les salons avec `/draft-salons`.")
+            await reply(interaction, "Configure d'abord les salons avec `/salons`.")
             return
         rows = fmt.parse_players(await read_attachment(fichier))
         if not rows:
@@ -365,7 +365,7 @@ def register_commands(bot: DraftBot) -> None:
         async def confirmed(button_interaction: discord.Interaction) -> None:
             channels = bot.channels(interaction.guild)
             if not channels:
-                await reply(button_interaction, "Les salons du draft ne sont plus accessibles. Refais `/draft-salons`.")
+                await reply(button_interaction, "Les salons du draft ne sont plus accessibles. Refais `/salons`.")
                 return
             async with bot.locks[guild_id]:
                 bot.backup("avant-liste")
@@ -379,7 +379,7 @@ def register_commands(bot: DraftBot) -> None:
             text += "\n⚠️ Noms en double : " + ", ".join(duplicates)
         await ask_confirmation(interaction, text + reset_warning(guild_id), confirmed)
 
-    @tree.command(name="draft-ordre", description="Définir l'ordre de sélection (remet le draft à zéro)")
+    @tree.command(name="ordre", description="Définir l'ordre de sélection (remet le draft à zéro)")
     @app_commands.describe(
         equipes="Ordre de la 1re ronde, séparé par des virgules (ex. : MTL, TOR, BOS)",
         rondes="Nombre de rondes",
@@ -423,7 +423,7 @@ def register_commands(bot: DraftBot) -> None:
                      + ". Ces équipes ne pourront pas faire `/draft` elles-mêmes.")
         await ask_confirmation(interaction, text + reset_warning(guild_id), confirmed)
 
-    @tree.command(name="draft-temps", description="Régler le délai pour chaque choix (0 pour aucun délai)")
+    @tree.command(name="delai", description="Régler le délai pour chaque choix (0 pour aucun délai)")
     @app_commands.describe(
         delai="Par exemple 8h, 90m ou 1h30. Mets 0 pour enlever le délai.",
         admin="Rôle à mentionner quand le temps est écoulé",
@@ -454,8 +454,8 @@ def register_commands(bot: DraftBot) -> None:
             "\n⚠️ Aucun rôle admin choisi : l'alerte ne mentionnera personne.")
         await reply(interaction, text + announced)
 
-    @tree.command(name="draft-echange", description="Donner un choix à une autre équipe")
-    @app_commands.describe(numero="Numéro du choix (voir /draft-statut)", equipe="Nouvelle équipe propriétaire")
+    @tree.command(name="echange", description="Donner un choix à une autre équipe")
+    @app_commands.describe(numero="Numéro du choix (voir /statut)", equipe="Nouvelle équipe propriétaire")
     @app_commands.guild_only()
     @admin_only
     async def draft_echange(interaction: discord.Interaction, numero: int, equipe: str) -> None:
@@ -495,7 +495,7 @@ def register_commands(bot: DraftBot) -> None:
     async def start_pick(interaction: discord.Interaction, joueur: str, forced: bool) -> None:
         guild_id = interaction.guild_id
         if not bot.channels(interaction.guild):
-            await reply(interaction, "Le draft n'est pas configuré. Un admin doit faire `/draft-salons`.")
+            await reply(interaction, "Le draft n'est pas configuré. Un admin doit faire `/salons`.")
             return
         pick = store.current_pick(guild_id)
         if pick is None:
@@ -543,7 +543,7 @@ def register_commands(bot: DraftBot) -> None:
                 return
             channels = bot.channels(interaction.guild)
             if channels is None:
-                problems.append("les salons du draft sont introuvables (refais `/draft-salons`)")
+                problems.append("les salons du draft sont introuvables (refais `/salons`)")
             else:
                 text = fmt.announcement(pick, player, forced) + "\n" + bot.on_the_clock(interaction.guild)
                 try:
@@ -586,7 +586,7 @@ def register_commands(bot: DraftBot) -> None:
     async def forcedraft(interaction: discord.Interaction, joueur: str) -> None:
         await start_pick(interaction, joueur, forced=True)
 
-    @tree.command(name="draft-annuler", description="Annuler le dernier choix (admin)")
+    @tree.command(name="annuler-choix", description="Annuler le dernier choix (admin)")
     @app_commands.guild_only()
     @admin_only
     async def draft_annuler(interaction: discord.Interaction) -> None:
@@ -624,7 +624,7 @@ def register_commands(bot: DraftBot) -> None:
             confirmed,
         )
 
-    @tree.command(name="draft-statut", description="Voir qui est au tour et les prochains choix")
+    @tree.command(name="statut", description="Voir qui est au tour et les prochains choix")
     @app_commands.guild_only()
     async def draft_statut(interaction: discord.Interaction) -> None:
         guild_id = interaction.guild_id
@@ -637,7 +637,7 @@ def register_commands(bot: DraftBot) -> None:
         lines.append(f"\n{len(store.available_players(guild_id))} joueurs disponibles.")
         await reply(interaction, "\n".join(lines))
 
-    @tree.command(name="draft-journal", description="Télécharger le journal de toutes les actions du draft (admin)")
+    @tree.command(name="journal", description="Télécharger le journal de toutes les actions du draft (admin)")
     @app_commands.guild_only()
     @admin_only
     async def draft_journal(interaction: discord.Interaction) -> None:

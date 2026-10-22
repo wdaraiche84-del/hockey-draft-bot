@@ -234,7 +234,7 @@ def test_forcedraft_and_undo_are_logged(league):
 
     async def scenario():
         await confirm(await command(bot, "forcedraft", FakeInteraction(guild, admin), "Bourque"))
-        await confirm(await command(bot, "draft-annuler", FakeInteraction(guild, admin)))
+        await confirm(await command(bot, "annuler-choix", FakeInteraction(guild, admin)))
     run(scenario())
     assert store.made_picks_count(guild.id) == 0
     assert [e[2] for e in store.log_entries(guild.id)] == ["choix admin", "annulation"]
@@ -273,8 +273,8 @@ def test_time_up_alert_pings_admin_role_once(league):
 
 def test_admin_commands_check_permission_every_time():
     bot = DraftBot(Store(":memory:"), [], backup_dir=None)
-    admin = {"draft-salons", "draft-liste", "draft-ordre", "draft-temps", "draft-echange",
-             "forcedraft", "draft-annuler", "draft-journal"}
+    admin = {"salons", "joueurs", "ordre", "delai", "echange",
+             "forcedraft", "annuler-choix", "journal"}
     for command in bot.tree.get_commands():
         if command.name in admin:
             assert command.default_permissions.manage_guild, command.name
@@ -307,7 +307,7 @@ def test_new_order_is_announced_publicly_with_role_ping(league):
     bot.backup = lambda reason: None
 
     async def scenario():
-        i = await command(bot, "draft-ordre", FakeInteraction(guild, admin), "granby, laval", 2, True)
+        i = await command(bot, "ordre", FakeInteraction(guild, admin), "granby, laval", 2, True)
         await confirm(i)
         return i
     i = run(scenario())
@@ -324,7 +324,7 @@ def test_trade_of_current_pick_pings_new_owner(league):
     granby = next(r for r in guild.roles if r.name == "Granby")
 
     async def scenario():
-        await confirm(await command(bot, "draft-echange", FakeInteraction(guild, admin), 1, "granby"))
+        await confirm(await command(bot, "echange", FakeInteraction(guild, admin), 1, "granby"))
     run(scenario())
     public = selections.texts()[-1]
     assert "Échange" in public and granby.mention in public
@@ -343,7 +343,7 @@ def test_new_timer_is_announced_during_draft(league):
                 self.response.done = True
             self.response.defer = defer
 
-    i = run(command(bot, "draft-temps", Deferring(guild, admin), "8h", None))
+    i = run(command(bot, "delai", Deferring(guild, admin), "8h", None))
     assert "Nouveau délai : **8 h**" in selections.texts()[-1]
     assert "Temps limite" in selections.texts()[-1]
     assert "Annoncé dans" in i.last
@@ -429,3 +429,20 @@ def test_without_guild_ids_old_guild_commands_are_removed():
         del type(bot).guilds
     assert "draft" in recorder.published[None]
     assert recorder.published[333] == []
+
+
+def test_only_two_commands_start_with_draft():
+    bot = DraftBot(Store(":memory:"), [], backup_dir=None)
+    names = sorted(c.name for c in bot.tree.get_commands())
+    assert [n for n in names if n.startswith("draft")] == ["draft"]
+    assert names == sorted(["draft", "forcedraft", "statut", "annuler-choix", "echange", "ordre",
+                            "joueurs", "delai", "salons", "journal"])
+
+
+def test_renamed_commands_replace_old_ones_on_each_server():
+    bot = DraftBot(Store(":memory:"), [111], backup_dir=None)
+    recorder = SyncRecorder(bot.tree)
+    bot.tree.sync = recorder
+    asyncio.run(bot.sync_commands())
+    # Discord remplace toute la liste du serveur : les anciens noms (draft-ordre…) disparaissent.
+    assert not [n for n in recorder.published[111] if n.startswith("draft-")]
