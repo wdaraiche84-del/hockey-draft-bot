@@ -279,7 +279,14 @@ class Store:
                 "UPDATE picks SET team = ? WHERE guild_id = ? AND number = ? AND player_id IS NULL",
                 (team_display(team), guild_id, number),
             )
-        return cur.rowcount == 1
+        if cur.rowcount != 1:
+            return False
+        current = self.current_pick(guild_id)
+        if current is not None and current.number == number:
+            # Le choix en cours change de main : la nouvelle équipe reçoit un délai complet,
+            # et l'alerte de fin de délai pourra repartir.
+            self.start_clock(guild_id)
+        return True
 
     # Minuterie
 

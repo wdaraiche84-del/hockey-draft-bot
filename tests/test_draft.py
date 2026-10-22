@@ -168,3 +168,39 @@ def test_log_and_backup(tmp_path):
     copy = Store(str(path))
     assert copy.made_picks_count(1) == 1
     assert len(copy.log_entries(1)) == 2
+
+
+def test_trading_current_pick_restarts_its_clock():
+    store = make_store()
+    store.set_timer(1, 3600, admin_role_id=None)
+    store.start_clock(1, now=0)
+    assert store.expired_pick(1, now=4000).number == 1
+    store.mark_alerted(1)
+    assert store.transfer_pick(1, 1, "Granby")
+    deadline = store.deadline(1)
+    assert deadline is not None and deadline > 4000  # délai complet pour Granby
+    assert store.expired_pick(1, now=deadline - 1) is None
+    assert store.expired_pick(1, now=deadline).team == "Granby"  # l'alerte peut repartir
+
+
+def test_trading_future_pick_keeps_current_clock():
+    store = make_store(order=["MTL", "TOR", "MTL", "TOR"])
+    store.set_timer(1, 3600, admin_role_id=None)
+    store.start_clock(1, now=0)
+    store.mark_alerted(1)
+    assert store.transfer_pick(1, 3, "TOR")
+    assert store.deadline(1) == 3600
+    assert store.expired_pick(1, now=9999) is None  # déjà averti pour le choix #1
+
+
+def test_undo_gives_a_fresh_clock_and_new_alert():
+    store = make_store()
+    store.set_timer(1, 60, admin_role_id=None)
+    store.make_pick(1, 1, store.available_players(1)[0].id)
+    store.start_clock(1, now=0)
+    store.mark_alerted(1)
+    store.undo_pick(1, 1)
+    assert store.current_pick(1).number == 1
+    deadline = store.deadline(1)
+    assert deadline > 60
+    assert store.expired_pick(1, now=deadline).number == 1
