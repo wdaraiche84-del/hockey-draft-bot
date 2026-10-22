@@ -113,7 +113,7 @@ class FakeInteraction:
         self.followup = FakeFollowup(self)
 
     async def edit_original_response(self, **kwargs):
-        pass
+        self.sent.append((kwargs.get("content"), kwargs.get("view")))
 
     @property
     def last(self):
@@ -436,7 +436,7 @@ def test_only_two_commands_start_with_draft():
     names = sorted(c.name for c in bot.tree.get_commands())
     assert [n for n in names if n.startswith("draft")] == ["draft"]
     assert names == sorted(["draft", "forcedraft", "statut", "annuler-choix", "echange", "ordre",
-                            "joueurs", "delai", "salons", "journal"])
+                            "joueurs", "delai", "salons", "journal", "roue"])
 
 
 def test_renamed_commands_replace_old_ones_on_each_server():
@@ -446,3 +446,24 @@ def test_renamed_commands_replace_old_ones_on_each_server():
     asyncio.run(bot.sync_commands())
     # Discord remplace toute la liste du serveur : les anciens noms (draft-ordre…) disparaissent.
     assert not [n for n in recorder.published[111] if n.startswith("draft-")]
+
+
+
+def test_wheel_is_public_and_logged(league, monkeypatch):
+    import draft_bot.bot as bot_module
+    bot, store, guild, gm_laval, _, _ = league
+    monkeypatch.setattr(bot_module, "WHEEL_SUSPENSE", 0)
+    i = run(command(bot, "roue", FakeInteraction(guild, gm_laval), "ott, stl", "gambrell"))
+    spinning, result = i.sent[-2][0], i.sent[-1][0]
+    assert "La roue tourne" in spinning and "gambrell" in spinning
+    winner = result.split("→ **")[1].split("**")[0]
+    assert result.startswith("🎡 **gambrell** → ") and winner in ("ott", "stl")
+    entry = store.log_entries(guild.id)[-1]
+    assert entry[2] == "roue" and entry[3] == f"gambrell : ott, stl → {winner}"  # le journal dit le même gagnant
+
+
+def test_wheel_rejects_bad_options(league):
+    bot, store, guild, gm_laval, _, _ = league
+    i = run(command(bot, "roue", FakeInteraction(guild, gm_laval), "ott", None))
+    assert "au moins deux options" in i.last
+    assert not [e for e in store.log_entries(guild.id) if e[2] == "roue"]

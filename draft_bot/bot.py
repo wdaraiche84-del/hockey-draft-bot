@@ -17,12 +17,16 @@ from discord.utils import escape_markdown
 from dotenv import load_dotenv
 
 from . import formatting as fmt
+from . import wheel
 from .storage import AlreadyRunning, PickError, Store, normalize, team_display
 
 log = logging.getLogger("draft_bot")
 
 PINGS = discord.AllowedMentions(users=True, roles=True, everyone=False)
 NO_PINGS = discord.AllowedMentions.none()
+
+# Secondes de suspense avant d'afficher le résultat de la roue.
+WHEEL_SUSPENSE = 3
 
 # Nombre de sauvegardes horaires gardées (deux jours).
 BACKUPS_KEPT = 48
@@ -636,6 +640,25 @@ def register_commands(bot: DraftBot) -> None:
         lines += [f"{fmt.pick_label(p)} : {escape_markdown(p.team)}" for p in upcoming[1:]]
         lines.append(f"\n{len(store.available_players(guild_id))} joueurs disponibles.")
         await reply(interaction, "\n".join(lines))
+
+    @tree.command(name="roue", description="Tirer au sort une option, chances égales (ex. : signature d'un joueur autonome)")
+    @app_commands.describe(choix="Les options, séparées par des virgules (ex. : ott, stl)",
+                           titre="Ce qu'on tire au sort (ex. : le nom du joueur)")
+    @app_commands.guild_only()
+    async def roue(interaction: discord.Interaction, choix: str, titre: str | None = None) -> None:
+        try:
+            options = wheel.parse_options(choix)
+        except wheel.WheelError as error:
+            await reply(interaction, f"❌ {error}")
+            return
+        title = " ".join(titre.split())[:100] if titre and titre.strip() else None
+        # Le résultat est tiré et noté au journal avant le suspense : il ne peut plus changer.
+        winner = wheel.spin(options)
+        store.add_log(interaction.guild_id, interaction.user.id, "roue", wheel.log_details(title, options, winner))
+        await interaction.response.send_message(wheel.spinning_message(title, options), allowed_mentions=NO_PINGS)
+        await asyncio.sleep(WHEEL_SUSPENSE)
+        await interaction.edit_original_response(content=wheel.result_message(title, options, winner),
+                                                 allowed_mentions=NO_PINGS)
 
     @tree.command(name="journal", description="Télécharger le journal de toutes les actions du draft (admin)")
     @app_commands.guild_only()

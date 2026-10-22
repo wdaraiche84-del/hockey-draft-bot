@@ -26,6 +26,7 @@ Les réponses du bot aux commandes sont privées : le salon de la liste reste pr
 | `/forcedraft joueur` | Admin | Repêcher pour l'équipe au tour |
 | `/annuler-choix` | Admin | Annuler le dernier choix |
 | `/statut` | Tous | Voir qui est au tour, le temps limite et les prochains choix |
+| `/roue choix titre` | Tous | Tirer au sort une option, chances égales (ex. : `ott, stl`, titre `gambrell`). Résultat public et noté au journal |
 | `/journal` | Admin | Télécharger le journal de toutes les actions (fichier Excel/CSV) |
 
 « Admin » veut dire la permission *Gérer le serveur*, vérifiée à chaque utilisation. Toute action qui change le draft demande une confirmation par bouton.
