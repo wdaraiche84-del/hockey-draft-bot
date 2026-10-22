@@ -299,3 +299,51 @@ def test_unlisted_server_is_left():
         await bot.on_guild_join(Guild(222))
     asyncio.run(scenario())
     assert left == [222]
+
+
+def test_new_order_is_announced_publicly_with_role_ping(league):
+    bot, store, guild, _, _, selections = league
+    admin = FakeMember(guild, [])
+    bot.backup = lambda reason: None
+
+    async def scenario():
+        i = await command(bot, "draft-ordre", FakeInteraction(guild, admin), "granby, laval", 2, True)
+        await confirm(i)
+        return i
+    i = run(scenario())
+    public = selections.texts()[-1]
+    assert "Le draft commence" in public
+    granby = next(r for r in guild.roles if r.name == "Granby")
+    assert granby.mention in public and "**Granby**" in public
+    assert "Annoncé dans" in i.last
+
+
+def test_trade_of_current_pick_pings_new_owner(league):
+    bot, store, guild, _, _, selections = league
+    admin = FakeMember(guild, [])
+    granby = next(r for r in guild.roles if r.name == "Granby")
+
+    async def scenario():
+        await confirm(await command(bot, "draft-echange", FakeInteraction(guild, admin), 1, "granby"))
+    run(scenario())
+    public = selections.texts()[-1]
+    assert "Échange" in public and granby.mention in public
+    assert store.current_pick(guild.id).team == "Granby"
+
+
+def test_new_timer_is_announced_during_draft(league):
+    bot, store, guild, _, _, selections = league
+    admin = FakeMember(guild, [])
+
+    class Deferring(FakeInteraction):
+        def __init__(self, *args):
+            super().__init__(*args)
+
+            async def defer(**kwargs):
+                self.response.done = True
+            self.response.defer = defer
+
+    i = run(command(bot, "draft-temps", Deferring(guild, admin), "8h", None))
+    assert "Nouveau délai : **8 h**" in selections.texts()[-1]
+    assert "Temps limite" in selections.texts()[-1]
+    assert "Annoncé dans" in i.last
