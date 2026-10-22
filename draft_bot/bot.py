@@ -1,43 +1,76 @@
 """Bot Discord qui gère le draft d'une ligue de hockey simulée."""
 
 import asyncio
+import csv
+import io
 import logging
 import os
+import time
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import discord
 from discord import app_commands
+from discord.ext import tasks
+from discord.utils import escape_markdown
 from dotenv import load_dotenv
 
 from . import formatting as fmt
-from .storage import Store, team_display
+from .storage import PickError, Store, normalize, team_display
 
 log = logging.getLogger("draft_bot")
 
-PING_USERS = discord.AllowedMentions(users=True, roles=False, everyone=False)
+PINGS = discord.AllowedMentions(users=True, roles=True, everyone=False)
 NO_PINGS = discord.AllowedMentions.none()
+
+# Nombre de sauvegardes horaires gardées (deux jours).
+BACKUPS_KEPT = 48
 
 
 class DraftBot(discord.Client):
-    def __init__(self, store: Store, guild_id: int | None):
+    def __init__(self, store: Store, guild_ids: list[int], backup_dir: Path):
         super().__init__(intents=discord.Intents.default())
         self.store = store
-        self.guild_id = guild_id
+        self.guild_ids = guild_ids
+        self.backup_dir = backup_dir
         self.tree = app_commands.CommandTree(self)
+        # Un verrou par serveur : deux commandes ne modifient jamais le même draft en même temps.
         self.locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         register_commands(self)
 
     async def setup_hook(self) -> None:
-        # Avec GUILD_ID, les commandes apparaissent tout de suite sur ce serveur.
-        if self.guild_id:
-            guild = discord.Object(id=self.guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+        # Avec GUILD_IDS, les commandes apparaissent tout de suite sur ces serveurs.
+        # Sans, elles sont publiées pour tous les serveurs où le bot est invité.
+        if self.guild_ids:
+            for guild_id in self.guild_ids:
+                guild = discord.Object(id=guild_id)
+                self.tree.copy_global_to(guild=guild)
+                try:
+                    await self.tree.sync(guild=guild)
+                except discord.Forbidden:
+                    log.warning("Le bot n'est pas encore sur le serveur %s : commandes non publiées.", guild_id)
         else:
             await self.tree.sync()
+        self.backup("demarrage")
+        self.check_timers.start()
+        self.hourly_backup.start()
 
     async def on_ready(self) -> None:
-        log.info("Connecté en tant que %s", self.user)
+        log.info("Connecté en tant que %s sur %d serveur(s)", self.user, len(self.guilds))
+        if not self.guild_ids:
+            log.warning("GUILD_IDS est vide : le bot accepte n'importe quel serveur.")
+        for guild in list(self.guilds):
+            await self.leave_if_not_allowed(guild)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        await self.leave_if_not_allowed(guild)
+
+    async def leave_if_not_allowed(self, guild: discord.Guild) -> None:
+        """Quitte tout serveur absent de GUILD_IDS. Sans liste, tous les serveurs sont acceptés."""
+        if self.guild_ids and guild.id not in self.guild_ids:
+            log.warning("Serveur non autorisé, le bot le quitte : %s (%s)", guild.name, guild.id)
+            await guild.leave()
 
     def channels(self, guild: discord.Guild) -> tuple[discord.TextChannel, discord.TextChannel] | None:
         ids = self.store.get_channels(guild.id)
@@ -48,6 +81,73 @@ class DraftBot(discord.Client):
             return None
         return list_channel, picks_channel
 
+    def team_role(self, guild: discord.Guild, team: str) -> discord.Role | None:
+        """Le rôle Discord qui porte le nom de l'équipe (sans tenir compte des majuscules ni des accents)."""
+        key = normalize(team)
+        return discord.utils.find(lambda role: normalize(role.name) == key, guild.roles)
+
+    def on_the_clock(self, guild: discord.Guild) -> str:
+        pick = self.store.current_pick(guild.id)
+        if pick is None:
+            return fmt.on_the_clock(None, "")
+        role = self.team_role(guild, pick.team)
+        ping = role.mention if role else "(aucun rôle à ce nom)"
+        return fmt.on_the_clock(pick, ping, self.store.deadline(guild.id))
+
+    def backup(self, reason: str) -> None:
+        """Copie la base dans le dossier des sauvegardes et garde les plus récentes."""
+        try:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+            self.store.backup(str(self.backup_dir / f"draft_{stamp}_{reason}.db"))
+            backups = sorted(self.backup_dir.glob("draft_*.db"), key=lambda p: p.stat().st_mtime)
+            for old in backups[:-BACKUPS_KEPT]:
+                old.unlink()
+        except OSError:
+            log.exception("Sauvegarde impossible dans %s", self.backup_dir)
+
+    @tasks.loop(hours=1)
+    async def hourly_backup(self) -> None:
+        self.backup("horaire")
+
+    @hourly_backup.before_loop
+    async def before_hourly_backup(self) -> None:
+        await self.wait_until_ready()
+        # La sauvegarde de démarrage vient d'être faite.
+        await asyncio.sleep(3600)
+
+    @tasks.loop(minutes=1)
+    async def check_timers(self) -> None:
+        """Avertit les admins quand le délai du choix en cours est écoulé.
+
+        Le chrono est gardé dans la base : après un redémarrage, une alerte
+        manquée pendant que le bot était éteint part au premier passage.
+        """
+        for guild_id in self.store.timed_guilds():
+            guild = self.get_guild(guild_id)
+            channels = self.channels(guild) if guild else None
+            if channels is None:
+                continue
+            try:
+                async with self.locks[guild_id]:
+                    pick = self.store.expired_pick(guild_id)
+                    if pick is None:
+                        continue
+                    _, admin_role_id = self.store.timer(guild_id)
+                    admin_role = guild.get_role(admin_role_id) if admin_role_id else None
+                    await channels[1].send(
+                        fmt.time_up(pick, admin_role.mention if admin_role else ""), allowed_mentions=PINGS
+                    )
+                    self.store.mark_alerted(guild_id)
+                    self.store.add_log(guild_id, None, "temps écoulé", f"#{pick.number} {pick.team}")
+            except Exception:
+                # Une erreur sur un serveur ne doit jamais arrêter la minuterie des autres.
+                log.exception("Impossible d'annoncer la fin du délai sur le serveur %s", guild_id)
+
+    @check_timers.before_loop
+    async def before_check_timers(self) -> None:
+        await self.wait_until_ready()
+
     async def refresh_list(self, guild_id: int, channel: discord.TextChannel, repost: bool = False) -> None:
         """Met à jour les messages de la liste en ne modifiant que ceux qui ont changé."""
         old = self.store.list_messages(guild_id)
@@ -57,21 +157,27 @@ class DraftBot(discord.Client):
             old = []
         chunks = fmt.render_list(self.store.available_players(guild_id))
         new = []
-        for i, chunk in enumerate(chunks):
-            if i < len(old):
-                message_id, content = old[i]
-                if content != chunk:
-                    try:
-                        await channel.get_partial_message(message_id).edit(content=chunk)
-                    except discord.NotFound:
-                        message_id = (await channel.send(chunk, allowed_mentions=NO_PINGS)).id
-                new.append((message_id, chunk))
-            else:
-                message = await channel.send(chunk, allowed_mentions=NO_PINGS)
-                new.append((message.id, chunk))
-        for message_id, _ in old[len(chunks):]:
-            await delete_message(channel, message_id)
-        self.store.set_list_messages(guild_id, new)
+        done = False
+        try:
+            for i, chunk in enumerate(chunks):
+                if i < len(old):
+                    message_id, content = old[i]
+                    if content != chunk:
+                        try:
+                            await channel.get_partial_message(message_id).edit(content=chunk)
+                        except discord.NotFound:
+                            message_id = (await channel.send(chunk, allowed_mentions=NO_PINGS)).id
+                    new.append((message_id, chunk))
+                else:
+                    message = await channel.send(chunk, allowed_mentions=NO_PINGS)
+                    new.append((message.id, chunk))
+            for message_id, _ in old[len(chunks):]:
+                await delete_message(channel, message_id)
+            done = True
+        finally:
+            # Même après une erreur, on garde la trace de tous les messages publiés
+            # pour que la prochaine mise à jour les modifie au lieu d'en créer d'autres.
+            self.store.set_list_messages(guild_id, new if done else new + old[len(new):])
 
 
 async def delete_message(channel: discord.TextChannel, message_id: int) -> None:
@@ -81,55 +187,156 @@ async def delete_message(channel: discord.TextChannel, message_id: int) -> None:
         pass
 
 
-async def reply(interaction: discord.Interaction, text: str) -> None:
+async def reply(interaction: discord.Interaction, text: str, **kwargs) -> None:
     if interaction.response.is_done():
-        await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
+        await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS, **kwargs)
     else:
-        await interaction.response.send_message(text, ephemeral=True, allowed_mentions=NO_PINGS)
+        await interaction.response.send_message(text, ephemeral=True, allowed_mentions=NO_PINGS, **kwargs)
+
+
+def explain_error(error: Exception) -> str:
+    """Un message clair pour le membre, selon le type d'erreur."""
+    if isinstance(error, app_commands.CommandInvokeError):
+        error = error.original
+    if isinstance(error, app_commands.MissingPermissions):
+        return "🔒 Cette commande est réservée aux admins (permission « Gérer le serveur »)."
+    if isinstance(error, app_commands.NoPrivateMessage):
+        return "Cette commande fonctionne seulement sur un serveur."
+    if isinstance(error, discord.Forbidden):
+        return ("🔒 Le bot n'a pas les permissions nécessaires. Vérifie qu'il peut voir les salons du draft, "
+                "y envoyer des messages, lire l'historique et mentionner les rôles.")
+    if isinstance(error, discord.HTTPException):
+        return "❌ Discord a refusé l'action. Réessaie dans un instant. Si ça se répète, préviens un admin."
+    return "❌ Erreur inattendue. Réessaie, et préviens un admin si ça se répète."
+
+
+class Confirm(discord.ui.View):
+    """Boutons « Confirmer » et « Annuler », réservés au membre qui a lancé la commande."""
+
+    def __init__(self, user_id: int, on_confirm: Callable[[discord.Interaction], Awaitable[None]]):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+        self.on_confirm = on_confirm
+        self.origin: discord.Interaction | None = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.user_id
+
+    @discord.ui.button(label="Confirmer", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.stop()
+        await interaction.response.edit_message(content="⏳ En cours…", view=None)
+        await self.on_confirm(interaction)
+
+    @discord.ui.button(label="Annuler", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.stop()
+        await interaction.response.edit_message(content="Annulé. Rien n'a été changé.", view=None)
+
+    async def on_timeout(self) -> None:
+        if self.origin:
+            try:
+                await self.origin.edit_original_response(
+                    content="⌛ Pas de confirmation après 2 minutes. Rien n'a été changé.", view=None)
+            except discord.HTTPException:
+                pass
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        log.exception("Erreur après une confirmation", exc_info=error)
+        await reply(interaction, explain_error(error))
+
+
+async def ask_confirmation(interaction: discord.Interaction, question: str,
+                           on_confirm: Callable[[discord.Interaction], Awaitable[None]]) -> None:
+    view = Confirm(interaction.user.id, on_confirm)
+    view.origin = interaction
+    await reply(interaction, question, view=view)
 
 
 async def read_attachment(attachment: discord.Attachment) -> str:
     return fmt.decode(await attachment.read())
 
 
+def admin_only(func):
+    # default_permissions cache la commande aux non-admins, mais un serveur peut changer
+    # ce réglage : has_permissions revérifie la permission à chaque utilisation.
+    func = app_commands.checks.has_permissions(manage_guild=True)(func)
+    return app_commands.default_permissions(manage_guild=True)(func)
+
+
 def register_commands(bot: DraftBot) -> None:
     tree = bot.tree
     store = bot.store
-    admin = app_commands.default_permissions(manage_guild=True)
 
     @tree.error
     async def on_error(interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
-        log.exception("Erreur dans une commande", exc_info=error)
-        await reply(interaction, f"❌ Une erreur est survenue : {error}")
+        if not isinstance(error, app_commands.MissingPermissions):
+            log.exception("Erreur dans /%s", interaction.command.name if interaction.command else "?",
+                          exc_info=error)
+        await reply(interaction, explain_error(error))
+
+    def reset_warning(guild_id: int) -> str:
+        made = store.made_picks_count(guild_id)
+        if not made:
+            return ""
+        return f"\n⚠️ **{made} choix déjà faits seront effacés.** Une sauvegarde sera faite avant."
 
     @tree.command(name="draft-salons", description="Choisir le salon de la liste et le salon des sélections")
     @app_commands.describe(liste="Salon où le bot affiche les joueurs disponibles",
                            selections="Salon où le bot annonce chaque choix")
     @app_commands.guild_only()
-    @admin
+    @admin_only
     async def draft_salons(interaction: discord.Interaction, liste: discord.TextChannel,
                            selections: discord.TextChannel) -> None:
+        if liste.id == selections.id:
+            await reply(interaction, "Choisis deux salons différents : un pour la liste, un pour les sélections.")
+            return
+        missing = []
+        for channel in (liste, selections):
+            perms = channel.permissions_for(interaction.guild.me)
+            if not (perms.view_channel and perms.send_messages and perms.read_message_history):
+                missing.append(channel.mention)
+        if missing:
+            await reply(interaction, "🔒 Le bot ne peut pas voir, écrire ou lire l'historique dans : "
+                        + ", ".join(missing) + ". Corrige ses permissions puis recommence.")
+            return
         store.set_channels(interaction.guild_id, liste.id, selections.id)
+        store.add_log(interaction.guild_id, interaction.user.id, "salons", f"{liste.name} / {selections.name}")
         await reply(interaction, f"✅ Liste dans {liste.mention}, sélections dans {selections.mention}.")
 
     @tree.command(name="draft-liste", description="Importer les joueurs repêchables et publier la liste")
     @app_commands.describe(fichier="Fichier CSV ou texte : nom, équipe actuelle, position (une ligne par joueur)")
     @app_commands.guild_only()
-    @admin
+    @admin_only
     async def draft_liste(interaction: discord.Interaction, fichier: discord.Attachment) -> None:
-        channels = bot.channels(interaction.guild)
-        if not channels:
+        guild_id = interaction.guild_id
+        if not bot.channels(interaction.guild):
             await reply(interaction, "Configure d'abord les salons avec `/draft-salons`.")
             return
         rows = fmt.parse_players(await read_attachment(fichier))
         if not rows:
-            await reply(interaction, "Aucun joueur trouvé dans le fichier.")
+            await reply(interaction, "Aucun joueur trouvé dans le fichier. Une ligne par joueur : "
+                        "`Nom;Équipe actuelle;Position`.")
             return
-        await interaction.response.defer(ephemeral=True)
-        async with bot.locks[interaction.guild_id]:
-            store.replace_players(interaction.guild_id, rows)
-            await bot.refresh_list(interaction.guild_id, channels[0], repost=True)
-        await reply(interaction, f"✅ {len(rows)} joueurs publiés dans {channels[0].mention}.")
+        duplicates = fmt.duplicate_names(rows)
+        preview = "\n".join(f"• {name} · {team} · {pos}" for name, team, pos in rows[:3])
+
+        async def confirmed(button_interaction: discord.Interaction) -> None:
+            channels = bot.channels(interaction.guild)
+            if not channels:
+                await reply(button_interaction, "Les salons du draft ne sont plus accessibles. Refais `/draft-salons`.")
+                return
+            async with bot.locks[guild_id]:
+                bot.backup("avant-liste")
+                store.replace_players(guild_id, rows)
+                store.add_log(guild_id, interaction.user.id, "liste", f"{len(rows)} joueurs importés")
+                await bot.refresh_list(guild_id, channels[0], repost=True)
+            await reply(button_interaction, f"✅ {len(rows)} joueurs publiés dans {channels[0].mention}.")
+
+        text = f"Importer **{len(rows)} joueurs** ? Les premiers :\n{preview}"
+        if duplicates:
+            text += "\n⚠️ Noms en double : " + ", ".join(duplicates)
+        await ask_confirmation(interaction, text + reset_warning(guild_id), confirmed)
 
     @tree.command(name="draft-ordre", description="Définir l'ordre de sélection (remet le draft à zéro)")
     @app_commands.describe(
@@ -139,83 +346,166 @@ def register_commands(bot: DraftBot) -> None:
         fichier="Ou un fichier avec l'ordre complet, une équipe par ligne (pour les choix échangés)",
     )
     @app_commands.guild_only()
-    @admin
+    @admin_only
     async def draft_ordre(interaction: discord.Interaction, equipes: str | None = None,
                           rondes: app_commands.Range[int, 1, 50] = 1, serpentin: bool = False,
                           fichier: discord.Attachment | None = None) -> None:
+        guild_id = interaction.guild_id
         if fichier:
             order = fmt.parse_order(await read_attachment(fichier))
         elif equipes:
             order = fmt.build_order(fmt.parse_order(equipes), rondes, serpentin)
         else:
-            await reply(interaction, "Donne les équipes ou un fichier d'ordre.")
+            await reply(interaction, "Donne les équipes (ex. : `MTL, TOR, BOS`) ou un fichier d'ordre.")
             return
         if not order:
             await reply(interaction, "Aucune équipe trouvée.")
             return
-        async with bot.locks[interaction.guild_id]:
-            per_round = store.set_order(interaction.guild_id, order)
-            channels = bot.channels(interaction.guild)
-            if channels and store.list_messages(interaction.guild_id):
-                await bot.refresh_list(interaction.guild_id, channels[0])
-        current = store.current_pick(interaction.guild_id)
-        missing = sorted({t for t in order if store.gm_for(interaction.guild_id, t) is None})
-        text = f"✅ {len(order)} choix, {per_round} équipes par ronde.\n" + fmt.on_the_clock(
-            current, store.gm_for(interaction.guild_id, current.team))
+        teams = sorted({team_display(t) for t in order})
+        missing = [t for t in teams if bot.team_role(interaction.guild, t) is None]
+
+        async def confirmed(button_interaction: discord.Interaction) -> None:
+            async with bot.locks[guild_id]:
+                bot.backup("avant-ordre")
+                per_round = store.set_order(guild_id, order)
+                store.add_log(guild_id, interaction.user.id, "ordre",
+                              f"{len(order)} choix : " + ", ".join(team_display(t) for t in order))
+                channels = bot.channels(interaction.guild)
+                if channels and store.list_messages(guild_id):
+                    await bot.refresh_list(guild_id, channels[0])
+            text = f"✅ {len(order)} choix, {per_round} équipes par ronde.\n" + bot.on_the_clock(interaction.guild)
+            await reply(button_interaction, text)
+
+        text = f"Définir un ordre de **{len(order)} choix** pour {len(teams)} équipes : {', '.join(teams)} ?"
         if missing:
-            text += "\n⚠️ Équipes sans DG (utilise `/draft-dg`) : " + ", ".join(missing)
+            text += ("\n⚠️ Aucun rôle Discord ne porte le nom de : " + ", ".join(missing)
+                     + ". Ces équipes ne pourront pas faire `/draft` elles-mêmes.")
+        await ask_confirmation(interaction, text + reset_warning(guild_id), confirmed)
+
+    @tree.command(name="draft-temps", description="Régler le délai pour chaque choix (0 pour aucun délai)")
+    @app_commands.describe(
+        delai="Par exemple 8h, 90m ou 1h30. Mets 0 pour enlever le délai.",
+        admin="Rôle à mentionner quand le temps est écoulé",
+    )
+    @app_commands.guild_only()
+    @admin_only
+    async def draft_temps(interaction: discord.Interaction, delai: str, admin: discord.Role | None = None) -> None:
+        seconds = fmt.parse_duration(delai)
+        if seconds is None:
+            await reply(interaction, "Délai non reconnu. Écris par exemple `8h`, `90m` ou `1h30`.")
+            return
+        async with bot.locks[interaction.guild_id]:
+            store.set_timer(interaction.guild_id, seconds, admin.id if admin else None)
+            store.add_log(interaction.guild_id, interaction.user.id, "délai",
+                          fmt.duration_text(seconds) if seconds else "aucun")
+        if seconds == 0:
+            await reply(interaction, "✅ Aucun délai par choix.")
+            return
+        text = f"✅ Délai de **{fmt.duration_text(seconds)}** par choix. Le chrono du choix en cours repart à zéro."
+        text += f"\n{admin.mention} sera mentionné quand le temps est écoulé." if admin else (
+            "\n⚠️ Aucun rôle admin choisi : l'alerte ne mentionnera personne.")
         await reply(interaction, text)
 
-    @tree.command(name="draft-dg", description="Associer un DG à une équipe")
-    @app_commands.guild_only()
-    @admin
-    async def draft_dg(interaction: discord.Interaction, equipe: str, membre: discord.Member) -> None:
-        store.set_gm(interaction.guild_id, equipe, membre.id)
-        await reply(interaction, f"✅ {membre.mention} est le DG de **{team_display(equipe)}**.")
-
     @tree.command(name="draft-echange", description="Donner un choix à une autre équipe")
-    @app_commands.describe(numero="Numéro du choix (ex. : 12)", equipe="Nouvelle équipe propriétaire")
+    @app_commands.describe(numero="Numéro du choix (voir /draft-statut)", equipe="Nouvelle équipe propriétaire")
     @app_commands.guild_only()
-    @admin
+    @admin_only
     async def draft_echange(interaction: discord.Interaction, numero: int, equipe: str) -> None:
-        if store.transfer_pick(interaction.guild_id, numero, equipe):
-            await reply(interaction, f"✅ Le choix #{numero} appartient maintenant à **{team_display(equipe)}**.")
-        else:
-            await reply(interaction, f"Le choix #{numero} n'existe pas ou a déjà été fait.")
-
-    async def make_pick(interaction: discord.Interaction, joueur: str, forced: bool) -> None:
         guild_id = interaction.guild_id
-        channels = bot.channels(interaction.guild)
-        if not channels:
+        pick = store.get_pick(guild_id, numero)
+        if pick is None or pick.player_id is not None:
+            await reply(interaction, f"Le choix #{numero} n'existe pas ou a déjà été fait.")
+            return
+        warning = ""
+        if bot.team_role(interaction.guild, equipe) is None:
+            warning = f"\n⚠️ Aucun rôle Discord ne porte le nom **{team_display(equipe)}**."
+
+        async def confirmed(button_interaction: discord.Interaction) -> None:
+            async with bot.locks[guild_id]:
+                if not store.transfer_pick(guild_id, numero, equipe):
+                    await reply(button_interaction, f"Le choix #{numero} a été fait entre-temps. Rien n'a changé.")
+                    return
+                store.add_log(guild_id, interaction.user.id, "échange",
+                              f"#{numero} : {pick.team} → {team_display(equipe)}")
+            await reply(button_interaction,
+                        f"✅ Le choix #{numero} appartient maintenant à **{team_display(equipe)}**.")
+
+        await ask_confirmation(
+            interaction,
+            f"Donner le **{fmt.pick_label(pick)}** de **{pick.team}** à **{team_display(equipe)}** ?" + warning,
+            confirmed,
+        )
+
+    async def start_pick(interaction: discord.Interaction, joueur: str, forced: bool) -> None:
+        guild_id = interaction.guild_id
+        if not bot.channels(interaction.guild):
             await reply(interaction, "Le draft n'est pas configuré. Un admin doit faire `/draft-salons`.")
             return
+        pick = store.current_pick(guild_id)
+        if pick is None:
+            await reply(interaction, "Aucun choix en attente : l'ordre n'est pas défini ou le draft est terminé.")
+            return
+        if not forced and not is_on_the_clock(interaction.user, pick.team):
+            await reply(interaction, "Ce n'est pas ton tour.\n" + bot.on_the_clock(interaction.guild))
+            return
+        matches = store.resolve_available(guild_id, joueur)
+        if not matches:
+            await reply(interaction, f"Aucun joueur disponible ne correspond à « {joueur} ».")
+            return
+        if len(matches) > 1:
+            names = ", ".join(p.name for p in matches[:10])
+            await reply(interaction, f"Plusieurs joueurs correspondent : {names}. Choisis dans la liste proposée.")
+            return
+        player = matches[0]
+
+        async def confirmed(button_interaction: discord.Interaction) -> None:
+            await finish_pick(button_interaction, pick.number, player.id, forced)
+
+        await ask_confirmation(
+            interaction,
+            f"**{pick.team}** repêche {fmt.player_line(player)} ({fmt.pick_label(pick)}) ?",
+            confirmed,
+        )
+
+    def is_on_the_clock(member: discord.Member, team: str) -> bool:
+        role = bot.team_role(member.guild, team)
+        return role is not None and role in member.roles
+
+    async def finish_pick(interaction: discord.Interaction, number: int, player_id: int, forced: bool) -> None:
+        guild_id = interaction.guild_id
+        problems = []
         async with bot.locks[guild_id]:
-            pick = store.current_pick(guild_id)
-            if pick is None:
-                await reply(interaction, "Aucun choix en attente : l'ordre n'est pas défini ou le draft est terminé.")
+            current = store.current_pick(guild_id)
+            # Revérifié au moment du clic : le rôle a pu être retiré entre-temps.
+            if not forced and current and not is_on_the_clock(interaction.user, current.team):
+                await reply(interaction, "Ce n'est plus ton tour. Rien n'a été enregistré.")
                 return
-            if not forced and store.gm_for(guild_id, pick.team) != interaction.user.id:
-                await reply(interaction, "Ce n'est pas ton tour.\n" + fmt.on_the_clock(
-                    pick, store.gm_for(guild_id, pick.team)))
+            try:
+                pick, player = store.make_pick(guild_id, number, player_id, interaction.user.id, forced)
+            except PickError as error:
+                await reply(interaction, f"❌ {error}")
                 return
-            matches = store.resolve_available(guild_id, joueur)
-            if not matches:
-                await reply(interaction, f"Aucun joueur disponible ne correspond à « {joueur} ».")
-                return
-            if len(matches) > 1:
-                names = ", ".join(p.name for p in matches[:10])
-                await reply(interaction, f"Plusieurs joueurs correspondent : {names}. Choisis dans la liste proposée.")
-                return
-            player = matches[0]
-            await interaction.response.defer(ephemeral=True)
-            store.record_pick(guild_id, pick.number, player.id)
-            following = store.current_pick(guild_id)
-            next_gm = store.gm_for(guild_id, following.team) if following else None
-            text = fmt.announcement(pick, player, forced) + "\n" + fmt.on_the_clock(following, next_gm)
-            message = await channels[1].send(text, allowed_mentions=PING_USERS)
-            store.set_pick_message(guild_id, pick.number, message.id)
-            await bot.refresh_list(guild_id, channels[0])
-        await reply(interaction, f"✅ **{player.name}** repêché par **{pick.team}**.")
+            channels = bot.channels(interaction.guild)
+            if channels is None:
+                problems.append("les salons du draft sont introuvables (refais `/draft-salons`)")
+            else:
+                text = fmt.announcement(pick, player, forced) + "\n" + bot.on_the_clock(interaction.guild)
+                try:
+                    message = await channels[1].send(text, allowed_mentions=PINGS)
+                    store.set_pick_message(guild_id, pick.number, message.id)
+                except discord.HTTPException as error:
+                    log.exception("Annonce impossible", exc_info=error)
+                    problems.append(f"l'annonce dans {channels[1].mention} a échoué")
+                try:
+                    await bot.refresh_list(guild_id, channels[0])
+                except discord.HTTPException as error:
+                    log.exception("Liste impossible à mettre à jour", exc_info=error)
+                    problems.append(f"la liste dans {channels[0].mention} n'a pas pu être mise à jour")
+        text = f"✅ **{escape_markdown(player.name)}** repêché par **{escape_markdown(pick.team)}**."
+        if problems:
+            text += ("\n⚠️ Le choix est bien enregistré, mais " + " et ".join(problems)
+                     + ". Vérifie les permissions du bot.")
+        await reply(interaction, text)
 
     async def player_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         players = store.search_available(interaction.guild_id, current)
@@ -225,45 +515,58 @@ def register_commands(bot: DraftBot) -> None:
             for p in players
         ]
 
-    @tree.command(name="draft", description="Repêcher un joueur (seulement le DG dont c'est le tour)")
+    @tree.command(name="draft", description="Repêcher un joueur (seulement l'équipe dont c'est le tour)")
     @app_commands.describe(joueur="Commence à taper le nom du joueur")
     @app_commands.autocomplete(joueur=player_autocomplete)
     @app_commands.guild_only()
     async def draft(interaction: discord.Interaction, joueur: str) -> None:
-        await make_pick(interaction, joueur, forced=False)
+        await start_pick(interaction, joueur, forced=False)
 
     @tree.command(name="forcedraft", description="Repêcher un joueur pour l'équipe au tour (admin)")
     @app_commands.describe(joueur="Commence à taper le nom du joueur")
     @app_commands.autocomplete(joueur=player_autocomplete)
     @app_commands.guild_only()
-    @admin
+    @admin_only
     async def forcedraft(interaction: discord.Interaction, joueur: str) -> None:
-        await make_pick(interaction, joueur, forced=True)
+        await start_pick(interaction, joueur, forced=True)
 
     @tree.command(name="draft-annuler", description="Annuler le dernier choix (admin)")
     @app_commands.guild_only()
-    @admin
+    @admin_only
     async def draft_annuler(interaction: discord.Interaction) -> None:
         guild_id = interaction.guild_id
-        channels = bot.channels(interaction.guild)
         last = store.last_made_pick(guild_id)
-        if not channels or last is None:
+        if last is None:
             await reply(interaction, "Aucun choix à annuler.")
             return
-        await interaction.response.defer(ephemeral=True)
-        async with bot.locks[guild_id]:
-            player = store.get_player(guild_id, last.player_id)
-            if last.message_id:
-                await delete_message(channels[1], last.message_id)
-            store.undo_pick(guild_id, last.number)
-            await bot.refresh_list(guild_id, channels[0])
-            current = store.current_pick(guild_id)
-            await channels[1].send(
-                f"↩️ {fmt.pick_label(last)} annulé : **{player.name}** retourne dans la liste.\n"
-                + fmt.on_the_clock(current, store.gm_for(guild_id, current.team)),
-                allowed_mentions=PING_USERS,
-            )
-        await reply(interaction, f"✅ {fmt.pick_label(last)} annulé.")
+        player = store.get_player(guild_id, last.player_id)
+
+        async def confirmed(button_interaction: discord.Interaction) -> None:
+            async with bot.locks[guild_id]:
+                latest = store.last_made_pick(guild_id)
+                if latest is None or (latest.number, latest.player_id) != (last.number, last.player_id):
+                    await reply(button_interaction, "Un autre choix a été fait entre-temps. Rien n'a été annulé.")
+                    return
+                store.undo_pick(guild_id, last.number)
+                store.add_log(guild_id, interaction.user.id, "annulation",
+                              f"#{last.number} {last.team} : {player.name}")
+                channels = bot.channels(interaction.guild)
+                if channels:
+                    if last.message_id:
+                        await delete_message(channels[1], last.message_id)
+                    await bot.refresh_list(guild_id, channels[0])
+                    await channels[1].send(
+                        f"↩️ {fmt.pick_label(last)} annulé : **{escape_markdown(player.name)}** "
+                        "retourne dans la liste.\n" + bot.on_the_clock(interaction.guild),
+                        allowed_mentions=PINGS,
+                    )
+            await reply(button_interaction, f"✅ {fmt.pick_label(last)} annulé.")
+
+        await ask_confirmation(
+            interaction,
+            f"Annuler le **{fmt.pick_label(last)}** : **{last.team}** avait pris {fmt.player_line(player)} ?",
+            confirmed,
+        )
 
     @tree.command(name="draft-statut", description="Voir qui est au tour et les prochains choix")
     @app_commands.guild_only()
@@ -273,19 +576,42 @@ def register_commands(bot: DraftBot) -> None:
         if not upcoming:
             await reply(interaction, "Aucun choix en attente.")
             return
-        lines = [fmt.on_the_clock(upcoming[0], store.gm_for(guild_id, upcoming[0].team)), "", "**Ensuite :**"]
-        lines += [f"{fmt.pick_label(p)} : {p.team}" for p in upcoming[1:]]
+        lines = [bot.on_the_clock(interaction.guild), "", "**Ensuite :**"]
+        lines += [f"{fmt.pick_label(p)} : {escape_markdown(p.team)}" for p in upcoming[1:]]
         lines.append(f"\n{len(store.available_players(guild_id))} joueurs disponibles.")
         await reply(interaction, "\n".join(lines))
+
+    @tree.command(name="draft-journal", description="Télécharger le journal de toutes les actions du draft (admin)")
+    @app_commands.guild_only()
+    @admin_only
+    async def draft_journal(interaction: discord.Interaction) -> None:
+        entries = store.log_entries(interaction.guild_id)
+        if not entries:
+            await reply(interaction, "Le journal est vide.")
+            return
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=";")
+        writer.writerow(["Date", "Membre", "Action", "Détails"])
+        for at, user_id, action, details in entries:
+            member = interaction.guild.get_member(user_id) if user_id else None
+            name = member.display_name if member else (str(user_id) if user_id else "bot")
+            writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(at)), name, action, details])
+        # utf-8-sig : Excel affiche correctement les accents.
+        data = io.BytesIO(buffer.getvalue().encode("utf-8-sig"))
+        recent = "\n".join(f"• {action} : {details}" for _, _, action, details in entries[-5:])
+        await reply(interaction, f"📒 {len(entries)} actions. Les dernières :\n{recent}",
+                    file=discord.File(data, filename="journal-draft.csv"))
 
 
 def main() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
     token = os.environ["DISCORD_TOKEN"]
-    guild_id = int(os.environ["GUILD_ID"]) if os.environ.get("GUILD_ID") else None
-    store = Store(os.environ.get("DB_PATH", "draft.db"))
-    DraftBot(store, guild_id).run(token)
+    raw_ids = os.environ.get("GUILD_IDS") or os.environ.get("GUILD_ID") or ""
+    guild_ids = [int(x) for x in raw_ids.replace(" ", "").split(",") if x]
+    db_path = os.environ.get("DB_PATH", "draft.db")
+    backup_dir = Path(os.environ.get("BACKUP_DIR") or Path(db_path).resolve().parent / "sauvegardes")
+    DraftBot(Store(db_path), guild_ids, backup_dir).run(token)
 
 
 if __name__ == "__main__":
