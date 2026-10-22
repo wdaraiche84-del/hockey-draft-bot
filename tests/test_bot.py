@@ -347,3 +347,85 @@ def test_new_timer_is_announced_during_draft(league):
     assert "Nouveau délai : **8 h**" in selections.texts()[-1]
     assert "Temps limite" in selections.texts()[-1]
     assert "Annoncé dans" in i.last
+
+
+def test_paths_on_pc_stay_next_to_the_bot():
+    from pathlib import Path
+    from draft_bot.bot import resolve_paths
+    db, backups = resolve_paths({})
+    assert db == Path("draft.db")
+    assert backups == Path("draft.db").resolve().parent / "sauvegardes"
+
+
+def test_paths_on_railway_go_to_the_volume():
+    from pathlib import Path
+    from draft_bot.bot import resolve_paths
+    env = {"RAILWAY_ENVIRONMENT": "production", "RAILWAY_VOLUME_MOUNT_PATH": "/data"}
+    assert resolve_paths(env) == (Path("/data/draft.db"), Path("/data/sauvegardes"))
+
+
+def test_railway_without_volume_refuses_to_start():
+    from draft_bot.bot import ConfigError, resolve_paths
+    with pytest.raises(ConfigError, match="volume"):
+        resolve_paths({"RAILWAY_ENVIRONMENT": "production"})
+
+
+def test_guild_ids_parsing():
+    from draft_bot.bot import ConfigError, parse_guild_ids
+    assert parse_guild_ids({"GUILD_IDS": "111, 222"}) == [111, 222]
+    assert parse_guild_ids({"GUILD_ID": "333"}) == [333]
+    assert parse_guild_ids({}) == []
+    with pytest.raises(ConfigError):
+        parse_guild_ids({"GUILD_IDS": "mon serveur"})
+
+
+def test_second_copy_of_the_bot_cannot_open_the_same_database(tmp_path):
+    from draft_bot.bot import ConfigError, open_store
+    path = tmp_path / "draft.db"
+    first = open_store(path)
+    with pytest.raises(ConfigError, match="autre copie"):
+        open_store(path, wait_seconds=0)
+    first.set_channels(1, 10, 20)  # la première copie fonctionne toujours
+    first.db.close()
+    assert open_store(path, wait_seconds=0).get_channels(1) == (10, 20)
+
+
+class SyncRecorder:
+    """Remplace tree.sync : note ce qui serait publié, global (None) ou par serveur."""
+
+    def __init__(self, tree):
+        self.tree = tree
+        self.published = {}
+
+    async def __call__(self, guild=None):
+        key = guild.id if guild else None
+        self.published[key] = sorted(c.name for c in self.tree.get_commands(guild=guild))
+
+
+def test_with_guild_ids_global_commands_are_emptied():
+    bot = DraftBot(Store(":memory:"), [111, 222], backup_dir=None)
+    recorder = SyncRecorder(bot.tree)
+    bot.tree.sync = recorder
+    asyncio.run(bot.sync_commands())
+    assert recorder.published[None] == []  # les anciennes commandes globales disparaissent
+    assert "draft" in recorder.published[111] and "draft" in recorder.published[222]
+    assert "draft-dg" not in recorder.published[111]
+
+
+def test_without_guild_ids_old_guild_commands_are_removed():
+    bot = DraftBot(Store(":memory:"), [], backup_dir=None)
+    recorder = SyncRecorder(bot.tree)
+    bot.tree.sync = recorder
+
+    class Guild:
+        id = 333
+    bot._connection._guilds = {}
+    type(bot).guilds = property(lambda self: [Guild()])
+    try:
+        asyncio.run(bot.sync_commands())
+        asyncio.run(bot.clear_stale_guild_commands())
+        asyncio.run(bot.clear_stale_guild_commands())  # une seule fois
+    finally:
+        del type(bot).guilds
+    assert "draft" in recorder.published[None]
+    assert recorder.published[333] == []

@@ -17,7 +17,7 @@ from discord.utils import escape_markdown
 from dotenv import load_dotenv
 
 from . import formatting as fmt
-from .storage import PickError, Store, normalize, team_display
+from .storage import AlreadyRunning, PickError, Store, normalize, team_display
 
 log = logging.getLogger("draft_bot")
 
@@ -37,27 +37,51 @@ class DraftBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
         # Un verrou par serveur : deux commandes ne modifient jamais le même draft en même temps.
         self.locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.stale_cleared = False
         register_commands(self)
 
     async def setup_hook(self) -> None:
-        # Avec GUILD_IDS, les commandes apparaissent tout de suite sur ces serveurs.
-        # Sans, elles sont publiées pour tous les serveurs où le bot est invité.
-        if self.guild_ids:
-            for guild_id in self.guild_ids:
-                guild = discord.Object(id=guild_id)
-                self.tree.copy_global_to(guild=guild)
-                try:
-                    await self.tree.sync(guild=guild)
-                except discord.Forbidden:
-                    log.warning("Le bot n'est pas encore sur le serveur %s : commandes non publiées.", guild_id)
-        else:
-            await self.tree.sync()
+        await self.sync_commands()
         self.backup("demarrage")
         self.check_timers.start()
         self.hourly_backup.start()
 
+    async def sync_commands(self) -> None:
+        """Publie les commandes d'une seule façon à la fois, pour éviter les doublons.
+
+        Avec GUILD_IDS, les commandes sont publiées sur chaque serveur (visibles tout de suite)
+        et la liste globale est vidée : sinon, les commandes globales d'une ancienne version
+        s'affichent en double à côté des nouvelles.
+        """
+        if not self.guild_ids:
+            await self.tree.sync()
+            return
+        for guild_id in self.guild_ids:
+            self.tree.copy_global_to(guild=discord.Object(id=guild_id))
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync()
+        for guild_id in self.guild_ids:
+            try:
+                await self.tree.sync(guild=discord.Object(id=guild_id))
+            except discord.Forbidden:
+                log.warning("Le bot n'est pas encore sur le serveur %s : commandes non publiées.", guild_id)
+
+    async def clear_stale_guild_commands(self) -> None:
+        """Sans GUILD_IDS, les commandes sont globales : on retire celles qu'une ancienne
+        version aurait publiées serveur par serveur."""
+        if self.guild_ids or self.stale_cleared:
+            return
+        self.stale_cleared = True
+        for guild in self.guilds:
+            try:
+                self.tree.clear_commands(guild=guild)
+                await self.tree.sync(guild=guild)
+            except discord.HTTPException:
+                log.warning("Impossible de nettoyer les commandes du serveur %s.", guild.id)
+
     async def on_ready(self) -> None:
         log.info("Connecté en tant que %s sur %d serveur(s)", self.user, len(self.guilds))
+        await self.clear_stale_guild_commands()
         if not self.guild_ids:
             log.warning("GUILD_IDS est vide : le bot accepte n'importe quel serveur.")
         for guild in list(self.guilds):
@@ -635,15 +659,66 @@ def register_commands(bot: DraftBot) -> None:
                     file=discord.File(data, filename="journal-draft.csv"))
 
 
+class ConfigError(Exception):
+    """Un réglage manquant ou invalide. Le message s'affiche tel quel au démarrage."""
+
+
+def resolve_paths(env: dict) -> tuple[Path, Path]:
+    """Où ranger la base du draft et ses sauvegardes.
+
+    Sur un PC, tout reste à côté du bot. Sur Railway, tout va dans le volume
+    (RAILWAY_VOLUME_MOUNT_PATH), le seul disque qui survit à un redéploiement.
+    """
+    on_railway = bool(env.get("RAILWAY_ENVIRONMENT") or env.get("RAILWAY_ENVIRONMENT_NAME"))
+    data_dir = env.get("DATA_DIR") or env.get("RAILWAY_VOLUME_MOUNT_PATH")
+    if on_railway and not env.get("RAILWAY_VOLUME_MOUNT_PATH") and not env.get("DB_PATH"):
+        raise ConfigError("Aucun volume Railway n'est attaché : le draft serait effacé à chaque redéploiement. "
+                          "Ajoute un volume monté sur /data au service, puis redéploie.")
+    if env.get("DB_PATH"):
+        db_path = Path(env["DB_PATH"])
+    else:
+        db_path = Path(data_dir) / "draft.db" if data_dir else Path("draft.db")
+    backup_dir = Path(env.get("BACKUP_DIR") or db_path.resolve().parent / "sauvegardes")
+    return db_path, backup_dir
+
+
+def parse_guild_ids(env: dict) -> list[int]:
+    raw = (env.get("GUILD_IDS") or env.get("GUILD_ID") or "").replace(" ", "")
+    try:
+        return [int(x) for x in raw.split(",") if x]
+    except ValueError:
+        raise ConfigError(f"GUILD_IDS doit contenir des identifiants de serveur séparés par des virgules, pas « {raw} ».")
+
+
+def open_store(db_path: Path, wait_seconds: int = 60) -> Store:
+    """Ouvre la base. Pendant un redéploiement, attend que l'ancienne copie du bot s'arrête."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            return Store(str(db_path), exclusive=True)
+        except AlreadyRunning:
+            if time.monotonic() >= deadline:
+                raise ConfigError(f"Une autre copie du bot utilise déjà {db_path}. Arrête-la avant d'en lancer une autre.")
+            log.warning("La base est utilisée par une autre copie du bot, nouvel essai dans 2 secondes.")
+            time.sleep(2)
+
+
 def main() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
-    token = os.environ["DISCORD_TOKEN"]
-    raw_ids = os.environ.get("GUILD_IDS") or os.environ.get("GUILD_ID") or ""
-    guild_ids = [int(x) for x in raw_ids.replace(" ", "").split(",") if x]
-    db_path = os.environ.get("DB_PATH", "draft.db")
-    backup_dir = Path(os.environ.get("BACKUP_DIR") or Path(db_path).resolve().parent / "sauvegardes")
-    DraftBot(Store(db_path), guild_ids, backup_dir).run(token)
+    try:
+        token = os.environ.get("DISCORD_TOKEN", "").strip()
+        if not token:
+            raise ConfigError("DISCORD_TOKEN est vide : colle le jeton du bot dans .env (ou dans les variables Railway).")
+        guild_ids = parse_guild_ids(os.environ)
+        db_path, backup_dir = resolve_paths(os.environ)
+        log.info("Base du draft : %s · sauvegardes : %s", db_path.resolve(), backup_dir)
+        store = open_store(db_path)
+    except ConfigError as error:
+        log.error("%s", error)
+        raise SystemExit(1)
+    DraftBot(store, guild_ids, backup_dir).run(token)
 
 
 if __name__ == "__main__":

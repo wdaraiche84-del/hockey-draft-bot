@@ -58,7 +58,7 @@ Réimporter la liste ou redéfinir l'ordre remet le draft à zéro. Le bot deman
 - **Un choix à la fois** : le bot revérifie, au moment du clic sur Confirmer, que c'est encore le tour de ce choix, que le membre a encore le rôle et que le joueur est encore disponible. Deux confirmations en même temps ne peuvent pas prendre le même joueur ni sauter un tour.
 - **Rien ne se perd au redémarrage** : le draft, le chrono et le journal sont dans la base `draft.db`. Une alerte de délai manquée pendant que le bot était éteint part dès son retour.
 - **Sauvegardes automatiques** dans le dossier `sauvegardes` : au démarrage, chaque heure, et avant chaque `/draft-liste` ou `/draft-ordre`. Les 48 plus récentes sont gardées. Pour revenir en arrière, arrêter le bot, remplacer `draft.db` par une sauvegarde renommée `draft.db`, puis relancer.
-- **Serveurs autorisés** : le bot quitte tout seul un serveur qui n'est pas dans `GUILD_IDS`.
+- **Serveurs autorisés** : le bot quitte tout seul un serveur qui n'est pas dans `GUILD_IDS`. Les commandes y sont publiées serveur par serveur, et les anciennes commandes globales sont effacées au démarrage pour éviter les doublons.
 
 ## Installation
 
@@ -82,6 +82,19 @@ python -m draft_bot
 2. Clic droit sur l'icône du serveur > *Copier l'identifiant du serveur*.
 3. Ajouter cet identifiant à `GUILD_IDS` dans `.env`, séparé des autres par une virgule.
 4. Redémarrer le bot, puis l'inviter sur le serveur.
+
+## Hébergement sur Railway
+
+Le dépôt est prêt pour Railway : `railway.json` donne la commande de démarrage (`python -m draft_bot`) et redémarre le bot s'il plante, et `.python-version` fixe Python 3.12.
+
+1. Sur Railway : **New Project** > **Deploy from GitHub repo** > `hockey-draft-bot`.
+2. Dans le service : **Variables** > ajouter `DISCORD_TOKEN` (le jeton du bot) et `GUILD_IDS` (les serveurs autorisés).
+3. Clic droit sur le service (ou **Ctrl+K**) > **Attach volume**, chemin de montage : `/data`. La base du draft, son journal et les sauvegardes y sont gardés entre les redéploiements.
+4. Arrêter le bot sur le PC avant que Railway le démarre : un même jeton ne doit tourner qu'à un seul endroit.
+
+Sans volume, le bot refuse de démarrer sur Railway, pour ne jamais perdre un draft au redéploiement. Une deuxième copie du bot ne peut pas ouvrir la même base : pendant un redéploiement, la nouvelle copie attend que l'ancienne s'arrête.
+
+Chaque merge sur `main` redéploie le bot automatiquement.
 
 ## Tests
 
