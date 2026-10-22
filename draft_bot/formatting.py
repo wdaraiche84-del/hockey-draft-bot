@@ -1,7 +1,7 @@
 """Lecture des fichiers importés et mise en forme des messages du bot."""
 
 import csv
-import io
+import re
 
 from discord.utils import escape_markdown
 
@@ -47,6 +47,16 @@ def parse_players(text: str) -> list[tuple[str, str, str]]:
     return rows
 
 
+def duplicate_names(rows: list[tuple[str, str, str]]) -> list[str]:
+    seen, duplicates = set(), []
+    for name, _, _ in rows:
+        key = normalize(name)
+        if key in seen and name not in duplicates:
+            duplicates.append(name)
+        seen.add(key)
+    return duplicates
+
+
 def parse_order(text: str) -> list[str]:
     """Lit une liste d'équipes séparées par des virgules ou des retours de ligne."""
     parts = text.replace("\n", ",").split(",")
@@ -89,8 +99,11 @@ def pick_label(pick: Pick) -> str:
     return f"Choix #{pick.number} (ronde {pick.round}, choix {pick.in_round})"
 
 
-def mention(user_id: int | None) -> str:
-    return f"<@{user_id}>" if user_id else "(aucun DG associé)"
+def deadline_text(deadline: float | None) -> str:
+    # Discord affiche ces balises dans le fuseau horaire de chaque membre.
+    if deadline is None:
+        return ""
+    return f"\n⌛ Temps limite : <t:{int(deadline)}:f> (<t:{int(deadline)}:R>)"
 
 
 def announcement(pick: Pick, player: Player, forced: bool) -> str:
@@ -103,7 +116,38 @@ def announcement(pick: Pick, player: Player, forced: bool) -> str:
     return text
 
 
-def on_the_clock(pick: Pick | None, gm_id: int | None) -> str:
+def on_the_clock(pick: Pick | None, ping: str, deadline: float | None = None) -> str:
+    """« Au tour de … », avec la mention du rôle de l'équipe et le temps limite."""
     if pick is None:
         return "🏁 Le draft est terminé!"
-    return f"⏱️ Au tour de **{escape_markdown(pick.team)}** {mention(gm_id)} ({pick_label(pick)})"
+    return (
+        f"⏱️ Au tour de **{escape_markdown(pick.team)}** {ping} ({pick_label(pick)})"
+        + deadline_text(deadline)
+    )
+
+
+def time_up(pick: Pick, admin_ping: str) -> str:
+    text = f"⏰ Temps écoulé pour **{escape_markdown(pick.team)}** ({pick_label(pick)})."
+    text += " Un admin peut faire le choix avec `/forcedraft`."
+    return f"{admin_ping} {text}" if admin_ping else text
+
+
+def parse_duration(text: str) -> int | None:
+    """Lit un délai comme « 8h », « 90m », « 1h30 » ou « 2 » (heures). « 0 » désactive."""
+    text = text.strip().lower().replace(" ", "")
+    if not text:
+        return None
+    if text.replace(".", "", 1).replace(",", "", 1).isdigit():
+        return int(float(text.replace(",", ".")) * 3600)
+    match = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)(?:m|min)?)?", text)
+    if not match or not any(match.groups()):
+        return None
+    hours, minutes = (int(x) if x else 0 for x in match.groups())
+    return hours * 3600 + minutes * 60
+
+
+def duration_text(seconds: int) -> str:
+    hours, minutes = divmod(seconds // 60, 60)
+    if hours and minutes:
+        return f"{hours} h {minutes:02d}"
+    return f"{hours} h" if hours else f"{minutes} min"

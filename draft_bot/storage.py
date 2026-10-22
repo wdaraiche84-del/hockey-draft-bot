@@ -1,6 +1,7 @@
 """Stockage SQLite de l'état du draft. Un seul draft par serveur Discord."""
 
 import sqlite3
+import time
 import unicodedata
 from dataclasses import dataclass
 
@@ -18,12 +19,6 @@ CREATE TABLE IF NOT EXISTS players (
     position TEXT NOT NULL,
     drafted INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS gms (
-    guild_id INTEGER NOT NULL,
-    team_key TEXT NOT NULL,
-    user_id INTEGER NOT NULL,
-    PRIMARY KEY (guild_id, team_key)
-);
 CREATE TABLE IF NOT EXISTS picks (
     guild_id INTEGER NOT NULL,
     number INTEGER NOT NULL,
@@ -34,6 +29,14 @@ CREATE TABLE IF NOT EXISTS picks (
     message_id INTEGER,
     PRIMARY KEY (guild_id, number)
 );
+CREATE TABLE IF NOT EXISTS log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    at REAL NOT NULL,
+    user_id INTEGER,
+    action TEXT NOT NULL,
+    details TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS list_messages (
     guild_id INTEGER NOT NULL,
     position INTEGER NOT NULL,
@@ -42,6 +45,15 @@ CREATE TABLE IF NOT EXISTS list_messages (
     PRIMARY KEY (guild_id, position)
 );
 """
+
+# Colonnes ajoutées après la première version : une base existante les reçoit au démarrage.
+CONFIG_COLUMNS = {
+    "pick_seconds": "INTEGER NOT NULL DEFAULT 0",
+    "admin_role_id": "INTEGER",
+    "clock_pick": "INTEGER",
+    "clock_started": "REAL",
+    "clock_alerted": "INTEGER NOT NULL DEFAULT 0",
+}
 
 
 def normalize(text: str) -> str:
@@ -61,6 +73,10 @@ def team_display(name: str) -> str:
     if name != name.lower():
         return name
     return name.upper() if len(name) <= 3 else name.title()
+
+
+class PickError(Exception):
+    """Un choix refusé. Le message s'affiche tel quel au membre."""
 
 
 @dataclass
@@ -86,13 +102,20 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        existing = {row[1] for row in self.db.execute("PRAGMA table_info(config)")}
+        with self.db:
+            for name, definition in CONFIG_COLUMNS.items():
+                if name not in existing:
+                    self.db.execute(f"ALTER TABLE config ADD COLUMN {name} {definition}")
 
     # Salons
 
     def set_channels(self, guild_id: int, list_channel_id: int, picks_channel_id: int) -> None:
         with self.db:
             self.db.execute(
-                "INSERT OR REPLACE INTO config VALUES (?, ?, ?)",
+                "INSERT INTO config (guild_id, list_channel_id, picks_channel_id) VALUES (?, ?, ?) "
+                "ON CONFLICT (guild_id) DO UPDATE SET list_channel_id = excluded.list_channel_id, "
+                "picks_channel_id = excluded.picks_channel_id",
                 (guild_id, list_channel_id, picks_channel_id),
             )
 
@@ -115,6 +138,7 @@ class Store:
                 "INSERT INTO players (guild_id, name, team, position) VALUES (?, ?, ?, ?)",
                 [(guild_id, *row) for row in rows],
             )
+        self.start_clock(guild_id)
 
     def available_players(self, guild_id: int) -> list[Player]:
         rows = self.db.execute(
@@ -151,20 +175,6 @@ class Store:
             return exact
         return [p for p in players if q in normalize(p.name)]
 
-    # DG
-
-    def set_gm(self, guild_id: int, team: str, user_id: int) -> None:
-        with self.db:
-            self.db.execute(
-                "INSERT OR REPLACE INTO gms VALUES (?, ?, ?)", (guild_id, normalize(team), user_id)
-            )
-
-    def gm_for(self, guild_id: int, team: str) -> int | None:
-        row = self.db.execute(
-            "SELECT user_id FROM gms WHERE guild_id = ? AND team_key = ?", (guild_id, normalize(team))
-        ).fetchone()
-        return row[0] if row else None
-
     # Ordre et choix
 
     def set_order(self, guild_id: int, teams: list[str]) -> int:
@@ -180,6 +190,7 @@ class Store:
                     for i, team in enumerate(teams)
                 ],
             )
+        self.start_clock(guild_id)
         return per_round
 
     def _picks(self, sql: str, params: tuple) -> list[Pick]:
@@ -205,19 +216,40 @@ class Store:
         )
         return picks[0] if picks else None
 
+    def made_picks_count(self, guild_id: int) -> int:
+        return self.db.execute(
+            "SELECT COUNT(*) FROM picks WHERE guild_id = ? AND player_id IS NOT NULL", (guild_id,)
+        ).fetchone()[0]
+
     def get_pick(self, guild_id: int, number: int) -> Pick | None:
         picks = self._picks("WHERE guild_id = ? AND number = ?", (guild_id, number))
         return picks[0] if picks else None
 
-    def record_pick(self, guild_id: int, number: int, player_id: int) -> None:
+    def make_pick(self, guild_id: int, number: int, player_id: int,
+                  user_id: int | None = None, forced: bool = False) -> tuple[Pick, Player]:
+        """Enregistre un choix, en vérifiant dans la même transaction que c'est encore
+        le tour de ce choix et que le joueur est encore disponible."""
         with self.db:
+            pick = self.current_pick(guild_id)
+            if pick is None or pick.number != number:
+                raise PickError("Le tour a changé pendant ta confirmation. Rien n'a été enregistré.")
+            player = self.get_player(guild_id, player_id)
+            drafted = self.db.execute(
+                "SELECT drafted FROM players WHERE guild_id = ? AND id = ?", (guild_id, player_id)
+            ).fetchone()
+            if player is None or drafted[0]:
+                raise PickError("Ce joueur n'est plus disponible. Rien n'a été enregistré.")
             self.db.execute(
-                "UPDATE picks SET player_id = ? WHERE guild_id = ? AND number = ?",
+                "UPDATE picks SET player_id = ? WHERE guild_id = ? AND number = ? AND player_id IS NULL",
                 (player_id, guild_id, number),
             )
             self.db.execute(
                 "UPDATE players SET drafted = 1 WHERE guild_id = ? AND id = ?", (guild_id, player_id)
             )
+            self._log(guild_id, user_id, "choix admin" if forced else "choix",
+                      f"#{number} {pick.team} : {player.name}")
+        self.start_clock(guild_id)
+        return pick, player
 
     def set_pick_message(self, guild_id: int, number: int, message_id: int) -> None:
         with self.db:
@@ -239,6 +271,7 @@ class Store:
                 "UPDATE players SET drafted = 0 WHERE guild_id = ? AND id = ?",
                 (guild_id, pick.player_id),
             )
+        self.start_clock(guild_id)
 
     def transfer_pick(self, guild_id: int, number: int, team: str) -> bool:
         with self.db:
@@ -247,6 +280,90 @@ class Store:
                 (team_display(team), guild_id, number),
             )
         return cur.rowcount == 1
+
+    # Minuterie
+
+    def set_timer(self, guild_id: int, seconds: int, admin_role_id: int | None) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, pick_seconds, admin_role_id) VALUES (?, ?, ?) "
+                "ON CONFLICT (guild_id) DO UPDATE SET pick_seconds = excluded.pick_seconds, "
+                "admin_role_id = excluded.admin_role_id",
+                (guild_id, seconds, admin_role_id),
+            )
+        # Le choix en cours repart avec le nouveau délai.
+        self.start_clock(guild_id)
+
+    def timer(self, guild_id: int) -> tuple[int, int | None]:
+        row = self.db.execute(
+            "SELECT pick_seconds, admin_role_id FROM config WHERE guild_id = ?", (guild_id,)
+        ).fetchone()
+        return (row[0], row[1]) if row else (0, None)
+
+    def start_clock(self, guild_id: int, now: float | None = None) -> None:
+        """Démarre le chrono du choix en cours. Appelé chaque fois que le tour change."""
+        pick = self.current_pick(guild_id)
+        with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, clock_pick, clock_started, clock_alerted) VALUES (?, ?, ?, 0) "
+                "ON CONFLICT (guild_id) DO UPDATE SET clock_pick = excluded.clock_pick, "
+                "clock_started = excluded.clock_started, clock_alerted = 0",
+                (guild_id, pick.number if pick else None, time.time() if now is None else now),
+            )
+
+    def deadline(self, guild_id: int) -> float | None:
+        """Heure limite du choix en cours, ou None s'il n'y a pas de délai."""
+        row = self.db.execute(
+            "SELECT pick_seconds, clock_pick, clock_started FROM config WHERE guild_id = ?", (guild_id,)
+        ).fetchone()
+        pick = self.current_pick(guild_id)
+        if not row or not row[0] or pick is None or row[1] != pick.number:
+            return None
+        return row[2] + row[0]
+
+    def expired_pick(self, guild_id: int, now: float | None = None) -> Pick | None:
+        """Le choix en cours si son délai est écoulé et qu'aucun admin n'a encore été averti."""
+        deadline = self.deadline(guild_id)
+        if deadline is None or (time.time() if now is None else now) < deadline:
+            return None
+        alerted = self.db.execute(
+            "SELECT clock_alerted FROM config WHERE guild_id = ?", (guild_id,)
+        ).fetchone()[0]
+        return None if alerted else self.current_pick(guild_id)
+
+    def mark_alerted(self, guild_id: int) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET clock_alerted = 1 WHERE guild_id = ?", (guild_id,))
+
+    def timed_guilds(self) -> list[int]:
+        rows = self.db.execute("SELECT guild_id FROM config WHERE pick_seconds > 0").fetchall()
+        return [row[0] for row in rows]
+
+    # Journal et sauvegardes
+
+    def _log(self, guild_id: int, user_id: int | None, action: str, details: str) -> None:
+        self.db.execute(
+            "INSERT INTO log (guild_id, at, user_id, action, details) VALUES (?, ?, ?, ?, ?)",
+            (guild_id, time.time(), user_id, action, details),
+        )
+
+    def add_log(self, guild_id: int, user_id: int | None, action: str, details: str) -> None:
+        with self.db:
+            self._log(guild_id, user_id, action, details)
+
+    def log_entries(self, guild_id: int) -> list[tuple[float, int | None, str, str]]:
+        rows = self.db.execute(
+            "SELECT at, user_id, action, details FROM log WHERE guild_id = ? ORDER BY id", (guild_id,)
+        ).fetchall()
+        return [tuple(row) for row in rows]
+
+    def backup(self, path: str) -> None:
+        """Copie cohérente de toute la base, même pendant que le bot l'utilise."""
+        target = sqlite3.connect(path)
+        try:
+            self.db.backup(target)
+        finally:
+            target.close()
 
     # Messages de la liste publiée
 
