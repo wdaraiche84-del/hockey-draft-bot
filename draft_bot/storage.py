@@ -75,6 +75,10 @@ def team_display(name: str) -> str:
     return name.upper() if len(name) <= 3 else name.title()
 
 
+class AlreadyRunning(Exception):
+    """Une autre copie du bot utilise déjà cette base."""
+
+
 class PickError(Exception):
     """Un choix refusé. Le message s'affiche tel quel au membre."""
 
@@ -98,9 +102,21 @@ class Pick:
 
 
 class Store:
-    def __init__(self, path: str):
-        self.db = sqlite3.connect(path)
+    def __init__(self, path: str, exclusive: bool = False):
+        """Avec exclusive, la base est verrouillée tant que le bot tourne : une deuxième
+        copie du bot (deux fenêtres, ou deux déploiements en même temps) ne peut pas
+        l'ouvrir et risquer d'enregistrer deux choix différents."""
+        self.db = sqlite3.connect(path, timeout=1)
         self.db.row_factory = sqlite3.Row
+        if exclusive:
+            try:
+                self.db.execute("PRAGMA locking_mode = EXCLUSIVE")
+                with self.db:
+                    self.db.execute("CREATE TABLE IF NOT EXISTS instance (id INTEGER PRIMARY KEY, started REAL)")
+                    self.db.execute("INSERT OR REPLACE INTO instance VALUES (1, ?)", (time.time(),))
+            except sqlite3.OperationalError as error:
+                self.db.close()
+                raise AlreadyRunning(path) from error
         self.db.executescript(SCHEMA)
         existing = {row[1] for row in self.db.execute("PRAGMA table_info(config)")}
         with self.db:

@@ -5,6 +5,7 @@ import itertools
 
 import pytest
 
+import draft_bot.bot as bot_module
 from draft_bot.bot import DraftBot
 from draft_bot.storage import Store
 
@@ -111,9 +112,13 @@ class FakeInteraction:
         self.sent = []
         self.response = FakeResponse(self)
         self.followup = FakeFollowup(self)
+        self.deleted = False
 
     async def edit_original_response(self, **kwargs):
-        pass
+        self.sent.append((kwargs.get("content"), kwargs.get("view")))
+
+    async def delete_original_response(self):
+        self.deleted = True
 
     @property
     def last(self):
@@ -122,6 +127,11 @@ class FakeInteraction:
     @property
     def view(self):
         return self.sent[-1][1]
+
+
+@pytest.fixture(autouse=True)
+def no_waiting(monkeypatch):
+    monkeypatch.setattr(bot_module, "PICK_REPLY_SECONDS", 0)
 
 
 @pytest.fixture
@@ -164,10 +174,24 @@ def test_gm_on_the_clock_picks_after_confirming(league):
         assert store.made_picks_count(guild.id) == 0  # rien avant la confirmation
         await confirm(i)
         assert "✅" in i.last
-    run(scenario())
+        return i
+    i = run(scenario())
+    assert i.deleted  # la réponse privée s'efface : rien ne reste à fermer
     assert store.current_pick(guild.id).team == "Granby"
     announce = selections.texts()[-1]
-    assert "Patrick Roy" in announce and "<@&" in announce  # le rôle suivant est mentionné
+    assert "**Laval** est fier de sélectionner **Patrick Roy** (Granby · G) au **1er rang**" in announce
+    assert "<@&" in announce  # le rôle suivant est mentionné
+
+
+def test_announcement_uses_role_name(league):
+    bot, store, guild, gm_laval, _, selections = league
+    guild.roles[0].name = "Les Bruins de Boston"
+    store.set_order(guild.id, ["les bruins de boston", "granby"])
+
+    async def scenario():
+        await confirm(await command(bot, "draft", FakeInteraction(guild, gm_laval), "Lemieux"))
+    run(scenario())
+    assert "**Les Bruins de Boston** sont fiers de sélectionner **Mario Lemieux**" in selections.texts()[-1]
 
 
 def test_other_team_cannot_pick(league):
@@ -234,7 +258,7 @@ def test_forcedraft_and_undo_are_logged(league):
 
     async def scenario():
         await confirm(await command(bot, "forcedraft", FakeInteraction(guild, admin), "Bourque"))
-        await confirm(await command(bot, "draft-annuler", FakeInteraction(guild, admin)))
+        await confirm(await command(bot, "annuler-choix", FakeInteraction(guild, admin)))
     run(scenario())
     assert store.made_picks_count(guild.id) == 0
     assert [e[2] for e in store.log_entries(guild.id)] == ["choix admin", "annulation"]
@@ -273,8 +297,8 @@ def test_time_up_alert_pings_admin_role_once(league):
 
 def test_admin_commands_check_permission_every_time():
     bot = DraftBot(Store(":memory:"), [], backup_dir=None)
-    admin = {"draft-salons", "draft-liste", "draft-ordre", "draft-temps", "draft-echange",
-             "forcedraft", "draft-annuler", "draft-journal"}
+    admin = {"salons", "joueurs", "ordre", "delai", "echange",
+             "forcedraft", "annuler-choix", "journal"}
     for command in bot.tree.get_commands():
         if command.name in admin:
             assert command.default_permissions.manage_guild, command.name
@@ -307,7 +331,7 @@ def test_new_order_is_announced_publicly_with_role_ping(league):
     bot.backup = lambda reason: None
 
     async def scenario():
-        i = await command(bot, "draft-ordre", FakeInteraction(guild, admin), "granby, laval", 2, True)
+        i = await command(bot, "ordre", FakeInteraction(guild, admin), "granby, laval", 2, True)
         await confirm(i)
         return i
     i = run(scenario())
@@ -324,7 +348,7 @@ def test_trade_of_current_pick_pings_new_owner(league):
     granby = next(r for r in guild.roles if r.name == "Granby")
 
     async def scenario():
-        await confirm(await command(bot, "draft-echange", FakeInteraction(guild, admin), 1, "granby"))
+        await confirm(await command(bot, "echange", FakeInteraction(guild, admin), 1, "granby"))
     run(scenario())
     public = selections.texts()[-1]
     assert "Échange" in public and granby.mention in public
@@ -343,7 +367,126 @@ def test_new_timer_is_announced_during_draft(league):
                 self.response.done = True
             self.response.defer = defer
 
-    i = run(command(bot, "draft-temps", Deferring(guild, admin), "8h", None))
+    i = run(command(bot, "delai", Deferring(guild, admin), "8h", None))
     assert "Nouveau délai : **8 h**" in selections.texts()[-1]
     assert "Temps limite" in selections.texts()[-1]
     assert "Annoncé dans" in i.last
+
+
+def test_paths_on_pc_stay_next_to_the_bot():
+    from pathlib import Path
+    from draft_bot.bot import resolve_paths
+    db, backups = resolve_paths({})
+    assert db == Path("draft.db")
+    assert backups == Path("draft.db").resolve().parent / "sauvegardes"
+
+
+def test_paths_on_railway_go_to_the_volume():
+    from pathlib import Path
+    from draft_bot.bot import resolve_paths
+    env = {"RAILWAY_ENVIRONMENT": "production", "RAILWAY_VOLUME_MOUNT_PATH": "/data"}
+    assert resolve_paths(env) == (Path("/data/draft.db"), Path("/data/sauvegardes"))
+
+
+def test_railway_without_volume_refuses_to_start():
+    from draft_bot.bot import ConfigError, resolve_paths
+    with pytest.raises(ConfigError, match="volume"):
+        resolve_paths({"RAILWAY_ENVIRONMENT": "production"})
+
+
+def test_guild_ids_parsing():
+    from draft_bot.bot import ConfigError, parse_guild_ids
+    assert parse_guild_ids({"GUILD_IDS": "111, 222"}) == [111, 222]
+    assert parse_guild_ids({"GUILD_ID": "333"}) == [333]
+    assert parse_guild_ids({}) == []
+    with pytest.raises(ConfigError):
+        parse_guild_ids({"GUILD_IDS": "mon serveur"})
+
+
+def test_second_copy_of_the_bot_cannot_open_the_same_database(tmp_path):
+    from draft_bot.bot import ConfigError, open_store
+    path = tmp_path / "draft.db"
+    first = open_store(path)
+    with pytest.raises(ConfigError, match="autre copie"):
+        open_store(path, wait_seconds=0)
+    first.set_channels(1, 10, 20)  # la première copie fonctionne toujours
+    first.db.close()
+    assert open_store(path, wait_seconds=0).get_channels(1) == (10, 20)
+
+
+class SyncRecorder:
+    """Remplace tree.sync : note ce qui serait publié, global (None) ou par serveur."""
+
+    def __init__(self, tree):
+        self.tree = tree
+        self.published = {}
+
+    async def __call__(self, guild=None):
+        key = guild.id if guild else None
+        self.published[key] = sorted(c.name for c in self.tree.get_commands(guild=guild))
+
+
+def test_with_guild_ids_global_commands_are_emptied():
+    bot = DraftBot(Store(":memory:"), [111, 222], backup_dir=None)
+    recorder = SyncRecorder(bot.tree)
+    bot.tree.sync = recorder
+    asyncio.run(bot.sync_commands())
+    assert recorder.published[None] == []  # les anciennes commandes globales disparaissent
+    assert "draft" in recorder.published[111] and "draft" in recorder.published[222]
+    assert "draft-dg" not in recorder.published[111]
+
+
+def test_without_guild_ids_old_guild_commands_are_removed():
+    bot = DraftBot(Store(":memory:"), [], backup_dir=None)
+    recorder = SyncRecorder(bot.tree)
+    bot.tree.sync = recorder
+
+    class Guild:
+        id = 333
+    bot._connection._guilds = {}
+    type(bot).guilds = property(lambda self: [Guild()])
+    try:
+        asyncio.run(bot.sync_commands())
+        asyncio.run(bot.clear_stale_guild_commands())
+        asyncio.run(bot.clear_stale_guild_commands())  # une seule fois
+    finally:
+        del type(bot).guilds
+    assert "draft" in recorder.published[None]
+    assert recorder.published[333] == []
+
+
+def test_only_two_commands_start_with_draft():
+    bot = DraftBot(Store(":memory:"), [], backup_dir=None)
+    names = sorted(c.name for c in bot.tree.get_commands())
+    assert [n for n in names if n.startswith("draft")] == ["draft"]
+    assert names == sorted(["draft", "forcedraft", "statut", "annuler-choix", "echange", "ordre",
+                            "joueurs", "delai", "salons", "journal", "roue"])
+
+
+def test_renamed_commands_replace_old_ones_on_each_server():
+    bot = DraftBot(Store(":memory:"), [111], backup_dir=None)
+    recorder = SyncRecorder(bot.tree)
+    bot.tree.sync = recorder
+    asyncio.run(bot.sync_commands())
+    # Discord remplace toute la liste du serveur : les anciens noms (draft-ordre…) disparaissent.
+    assert not [n for n in recorder.published[111] if n.startswith("draft-")]
+
+
+
+def test_wheel_is_public_and_logged(league, monkeypatch):
+    bot, store, guild, gm_laval, _, _ = league
+    monkeypatch.setattr(bot_module, "WHEEL_SUSPENSE", 0)
+    i = run(command(bot, "roue", FakeInteraction(guild, gm_laval), "ott, stl", "gambrell"))
+    spinning, result = i.sent[-2][0], i.sent[-1][0]
+    assert "La roue tourne" in spinning and "gambrell" in spinning
+    winner = result.split("→ **")[1].split("**")[0]
+    assert result.startswith("🎡 **gambrell** → ") and winner in ("ott", "stl")
+    entry = store.log_entries(guild.id)[-1]
+    assert entry[2] == "roue" and entry[3] == f"gambrell : ott, stl → {winner}"  # le journal dit le même gagnant
+
+
+def test_wheel_rejects_bad_options(league):
+    bot, store, guild, gm_laval, _, _ = league
+    i = run(command(bot, "roue", FakeInteraction(guild, gm_laval), "ott", None))
+    assert "au moins deux options" in i.last
+    assert not [e for e in store.log_entries(guild.id) if e[2] == "roue"]

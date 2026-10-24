@@ -106,10 +106,34 @@ def deadline_text(deadline: float | None) -> str:
     return f"\n⌛ Temps limite : <t:{int(deadline)}:f> (<t:{int(deadline)}:R>)"
 
 
-def announcement(pick: Pick, player: Player, forced: bool) -> str:
+def ordinal(number: int) -> str:
+    return "1er" if number == 1 else f"{number}e"
+
+
+def proud_team(team: str) -> tuple[str, str]:
+    """(« Les Bruins de Boston », « sont fiers »), accordé selon l'article du nom de l'équipe."""
+    lowered = team.lower()
+    capitalized = team[:1].upper() + team[1:]
+    if lowered.startswith("les "):
+        return capitalized, "sont fiers"
+    if lowered.startswith("la "):
+        return capitalized, "est fière"
+    if lowered.startswith(("le ", "l'", "l’")):
+        return capitalized, "est fier"
+    if " " not in team:
+        # Un seul mot, comme une ville : « Laval est fier ».
+        return team, "est fier"
+    return f"Les {team}", "sont fiers"
+
+
+def announcement(pick: Pick, player: Player, forced: bool, team: str | None = None) -> str:
+    """« Les Bruins de Boston sont fiers de sélectionner … au 5e rang. »"""
+    subject, verb = proud_team(team or pick.team)
+    details = " · ".join(escape_markdown(x) for x in (player.team, player.position) if x)
     text = (
-        f"🏒 **{pick_label(pick)}** : **{escape_markdown(pick.team)}** sélectionne "
-        f"{player_line(player)}"
+        f"🏒 **{escape_markdown(subject)}** {verb} de sélectionner **{escape_markdown(player.name)}**"
+        + (f" ({details})" if details else "")
+        + f" au **{ordinal(pick.number)} rang** (ronde {pick.round}, choix {pick.in_round})."
     )
     if forced:
         text += " *(choix fait par un admin)*"

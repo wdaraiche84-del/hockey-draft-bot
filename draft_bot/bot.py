@@ -17,12 +17,18 @@ from discord.utils import escape_markdown
 from dotenv import load_dotenv
 
 from . import formatting as fmt
-from .storage import PickError, Store, normalize, team_display
+from . import wheel
+from .storage import AlreadyRunning, PickError, Store, normalize, team_display
 
 log = logging.getLogger("draft_bot")
 
 PINGS = discord.AllowedMentions(users=True, roles=True, everyone=False)
 NO_PINGS = discord.AllowedMentions.none()
+
+# Secondes de suspense avant d'afficher le résultat de la roue.
+WHEEL_SUSPENSE = 3
+# Temps d'affichage du « ✅ repêché » avant qu'il s'efface.
+PICK_REPLY_SECONDS = 8
 
 # Nombre de sauvegardes horaires gardées (deux jours).
 BACKUPS_KEPT = 48
@@ -37,27 +43,51 @@ class DraftBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
         # Un verrou par serveur : deux commandes ne modifient jamais le même draft en même temps.
         self.locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.stale_cleared = False
         register_commands(self)
 
     async def setup_hook(self) -> None:
-        # Avec GUILD_IDS, les commandes apparaissent tout de suite sur ces serveurs.
-        # Sans, elles sont publiées pour tous les serveurs où le bot est invité.
-        if self.guild_ids:
-            for guild_id in self.guild_ids:
-                guild = discord.Object(id=guild_id)
-                self.tree.copy_global_to(guild=guild)
-                try:
-                    await self.tree.sync(guild=guild)
-                except discord.Forbidden:
-                    log.warning("Le bot n'est pas encore sur le serveur %s : commandes non publiées.", guild_id)
-        else:
-            await self.tree.sync()
+        await self.sync_commands()
         self.backup("demarrage")
         self.check_timers.start()
         self.hourly_backup.start()
 
+    async def sync_commands(self) -> None:
+        """Publie les commandes d'une seule façon à la fois, pour éviter les doublons.
+
+        Avec GUILD_IDS, les commandes sont publiées sur chaque serveur (visibles tout de suite)
+        et la liste globale est vidée : sinon, les commandes globales d'une ancienne version
+        s'affichent en double à côté des nouvelles.
+        """
+        if not self.guild_ids:
+            await self.tree.sync()
+            return
+        for guild_id in self.guild_ids:
+            self.tree.copy_global_to(guild=discord.Object(id=guild_id))
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync()
+        for guild_id in self.guild_ids:
+            try:
+                await self.tree.sync(guild=discord.Object(id=guild_id))
+            except discord.Forbidden:
+                log.warning("Le bot n'est pas encore sur le serveur %s : commandes non publiées.", guild_id)
+
+    async def clear_stale_guild_commands(self) -> None:
+        """Sans GUILD_IDS, les commandes sont globales : on retire celles qu'une ancienne
+        version aurait publiées serveur par serveur."""
+        if self.guild_ids or self.stale_cleared:
+            return
+        self.stale_cleared = True
+        for guild in self.guilds:
+            try:
+                self.tree.clear_commands(guild=guild)
+                await self.tree.sync(guild=guild)
+            except discord.HTTPException:
+                log.warning("Impossible de nettoyer les commandes du serveur %s.", guild.id)
+
     async def on_ready(self) -> None:
         log.info("Connecté en tant que %s sur %d serveur(s)", self.user, len(self.guilds))
+        await self.clear_stale_guild_commands()
         if not self.guild_ids:
             log.warning("GUILD_IDS est vide : le bot accepte n'importe quel serveur.")
         for guild in list(self.guilds):
@@ -101,7 +131,7 @@ class DraftBot(discord.Client):
         """
         channels = self.channels(guild)
         if channels is None:
-            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (refais `/draft-salons`)."
+            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (refais `/salons`)."
         if with_clock:
             text += "\n" + self.on_the_clock(guild)
         try:
@@ -298,7 +328,7 @@ def register_commands(bot: DraftBot) -> None:
             return ""
         return f"\n⚠️ **{made} choix déjà faits seront effacés.** Une sauvegarde sera faite avant."
 
-    @tree.command(name="draft-salons", description="Choisir le salon de la liste et le salon des sélections")
+    @tree.command(name="salons", description="Choisir le salon de la liste et le salon des sélections")
     @app_commands.describe(liste="Salon où le bot affiche les joueurs disponibles",
                            selections="Salon où le bot annonce chaque choix")
     @app_commands.guild_only()
@@ -321,14 +351,14 @@ def register_commands(bot: DraftBot) -> None:
         store.add_log(interaction.guild_id, interaction.user.id, "salons", f"{liste.name} / {selections.name}")
         await reply(interaction, f"✅ Liste dans {liste.mention}, sélections dans {selections.mention}.")
 
-    @tree.command(name="draft-liste", description="Importer les joueurs repêchables et publier la liste")
+    @tree.command(name="joueurs", description="Importer les joueurs repêchables et publier la liste")
     @app_commands.describe(fichier="Fichier CSV ou texte : nom, équipe actuelle, position (une ligne par joueur)")
     @app_commands.guild_only()
     @admin_only
     async def draft_liste(interaction: discord.Interaction, fichier: discord.Attachment) -> None:
         guild_id = interaction.guild_id
         if not bot.channels(interaction.guild):
-            await reply(interaction, "Configure d'abord les salons avec `/draft-salons`.")
+            await reply(interaction, "Configure d'abord les salons avec `/salons`.")
             return
         rows = fmt.parse_players(await read_attachment(fichier))
         if not rows:
@@ -341,7 +371,7 @@ def register_commands(bot: DraftBot) -> None:
         async def confirmed(button_interaction: discord.Interaction) -> None:
             channels = bot.channels(interaction.guild)
             if not channels:
-                await reply(button_interaction, "Les salons du draft ne sont plus accessibles. Refais `/draft-salons`.")
+                await reply(button_interaction, "Les salons du draft ne sont plus accessibles. Refais `/salons`.")
                 return
             async with bot.locks[guild_id]:
                 bot.backup("avant-liste")
@@ -355,7 +385,7 @@ def register_commands(bot: DraftBot) -> None:
             text += "\n⚠️ Noms en double : " + ", ".join(duplicates)
         await ask_confirmation(interaction, text + reset_warning(guild_id), confirmed)
 
-    @tree.command(name="draft-ordre", description="Définir l'ordre de sélection (remet le draft à zéro)")
+    @tree.command(name="ordre", description="Définir l'ordre de sélection (remet le draft à zéro)")
     @app_commands.describe(
         equipes="Ordre de la 1re ronde, séparé par des virgules (ex. : MTL, TOR, BOS)",
         rondes="Nombre de rondes",
@@ -399,7 +429,7 @@ def register_commands(bot: DraftBot) -> None:
                      + ". Ces équipes ne pourront pas faire `/draft` elles-mêmes.")
         await ask_confirmation(interaction, text + reset_warning(guild_id), confirmed)
 
-    @tree.command(name="draft-temps", description="Régler le délai pour chaque choix (0 pour aucun délai)")
+    @tree.command(name="delai", description="Régler le délai pour chaque choix (0 pour aucun délai)")
     @app_commands.describe(
         delai="Par exemple 8h, 90m ou 1h30. Mets 0 pour enlever le délai.",
         admin="Rôle à mentionner quand le temps est écoulé",
@@ -430,8 +460,8 @@ def register_commands(bot: DraftBot) -> None:
             "\n⚠️ Aucun rôle admin choisi : l'alerte ne mentionnera personne.")
         await reply(interaction, text + announced)
 
-    @tree.command(name="draft-echange", description="Donner un choix à une autre équipe")
-    @app_commands.describe(numero="Numéro du choix (voir /draft-statut)", equipe="Nouvelle équipe propriétaire")
+    @tree.command(name="echange", description="Donner un choix à une autre équipe")
+    @app_commands.describe(numero="Numéro du choix (voir /statut)", equipe="Nouvelle équipe propriétaire")
     @app_commands.guild_only()
     @admin_only
     async def draft_echange(interaction: discord.Interaction, numero: int, equipe: str) -> None:
@@ -471,7 +501,7 @@ def register_commands(bot: DraftBot) -> None:
     async def start_pick(interaction: discord.Interaction, joueur: str, forced: bool) -> None:
         guild_id = interaction.guild_id
         if not bot.channels(interaction.guild):
-            await reply(interaction, "Le draft n'est pas configuré. Un admin doit faire `/draft-salons`.")
+            await reply(interaction, "Le draft n'est pas configuré. Un admin doit faire `/salons`.")
             return
         pick = store.current_pick(guild_id)
         if pick is None:
@@ -519,9 +549,11 @@ def register_commands(bot: DraftBot) -> None:
                 return
             channels = bot.channels(interaction.guild)
             if channels is None:
-                problems.append("les salons du draft sont introuvables (refais `/draft-salons`)")
+                problems.append("les salons du draft sont introuvables (refais `/salons`)")
             else:
-                text = fmt.announcement(pick, player, forced) + "\n" + bot.on_the_clock(interaction.guild)
+                role = bot.team_role(interaction.guild, pick.team)
+                text = (fmt.announcement(pick, player, forced, role.name if role else None)
+                        + "\n" + bot.on_the_clock(interaction.guild))
                 try:
                     message = await channels[1].send(text, allowed_mentions=PINGS)
                     store.set_pick_message(guild_id, pick.number, message.id)
@@ -537,7 +569,15 @@ def register_commands(bot: DraftBot) -> None:
         if problems:
             text += ("\n⚠️ Le choix est bien enregistré, mais " + " et ".join(problems)
                      + ". Vérifie les permissions du bot.")
-        await reply(interaction, text)
+            await reply(interaction, text)
+            return
+        # Tout s'est bien passé : la réponse privée s'efface d'elle-même, pour qu'il ne reste rien à fermer.
+        await interaction.edit_original_response(content=text + f" Annoncé dans {channels[1].mention}.", view=None)
+        await asyncio.sleep(PICK_REPLY_SECONDS)
+        try:
+            await interaction.delete_original_response()
+        except discord.HTTPException:
+            pass
 
     async def player_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         players = store.search_available(interaction.guild_id, current)
@@ -562,7 +602,7 @@ def register_commands(bot: DraftBot) -> None:
     async def forcedraft(interaction: discord.Interaction, joueur: str) -> None:
         await start_pick(interaction, joueur, forced=True)
 
-    @tree.command(name="draft-annuler", description="Annuler le dernier choix (admin)")
+    @tree.command(name="annuler-choix", description="Annuler le dernier choix (admin)")
     @app_commands.guild_only()
     @admin_only
     async def draft_annuler(interaction: discord.Interaction) -> None:
@@ -600,7 +640,7 @@ def register_commands(bot: DraftBot) -> None:
             confirmed,
         )
 
-    @tree.command(name="draft-statut", description="Voir qui est au tour et les prochains choix")
+    @tree.command(name="statut", description="Voir qui est au tour et les prochains choix")
     @app_commands.guild_only()
     async def draft_statut(interaction: discord.Interaction) -> None:
         guild_id = interaction.guild_id
@@ -613,7 +653,26 @@ def register_commands(bot: DraftBot) -> None:
         lines.append(f"\n{len(store.available_players(guild_id))} joueurs disponibles.")
         await reply(interaction, "\n".join(lines))
 
-    @tree.command(name="draft-journal", description="Télécharger le journal de toutes les actions du draft (admin)")
+    @tree.command(name="roue", description="Tirer au sort une option, chances égales (ex. : signature d'un joueur autonome)")
+    @app_commands.describe(choix="Les options, séparées par des virgules (ex. : ott, stl)",
+                           titre="Ce qu'on tire au sort (ex. : le nom du joueur)")
+    @app_commands.guild_only()
+    async def roue(interaction: discord.Interaction, choix: str, titre: str | None = None) -> None:
+        try:
+            options = wheel.parse_options(choix)
+        except wheel.WheelError as error:
+            await reply(interaction, f"❌ {error}")
+            return
+        title = " ".join(titre.split())[:100] if titre and titre.strip() else None
+        # Le résultat est tiré et noté au journal avant le suspense : il ne peut plus changer.
+        winner = wheel.spin(options)
+        store.add_log(interaction.guild_id, interaction.user.id, "roue", wheel.log_details(title, options, winner))
+        await interaction.response.send_message(wheel.spinning_message(title, options), allowed_mentions=NO_PINGS)
+        await asyncio.sleep(WHEEL_SUSPENSE)
+        await interaction.edit_original_response(content=wheel.result_message(title, options, winner),
+                                                 allowed_mentions=NO_PINGS)
+
+    @tree.command(name="journal", description="Télécharger le journal de toutes les actions du draft (admin)")
     @app_commands.guild_only()
     @admin_only
     async def draft_journal(interaction: discord.Interaction) -> None:
@@ -635,15 +694,66 @@ def register_commands(bot: DraftBot) -> None:
                     file=discord.File(data, filename="journal-draft.csv"))
 
 
+class ConfigError(Exception):
+    """Un réglage manquant ou invalide. Le message s'affiche tel quel au démarrage."""
+
+
+def resolve_paths(env: dict) -> tuple[Path, Path]:
+    """Où ranger la base du draft et ses sauvegardes.
+
+    Sur un PC, tout reste à côté du bot. Sur Railway, tout va dans le volume
+    (RAILWAY_VOLUME_MOUNT_PATH), le seul disque qui survit à un redéploiement.
+    """
+    on_railway = bool(env.get("RAILWAY_ENVIRONMENT") or env.get("RAILWAY_ENVIRONMENT_NAME"))
+    data_dir = env.get("DATA_DIR") or env.get("RAILWAY_VOLUME_MOUNT_PATH")
+    if on_railway and not env.get("RAILWAY_VOLUME_MOUNT_PATH") and not env.get("DB_PATH"):
+        raise ConfigError("Aucun volume Railway n'est attaché : le draft serait effacé à chaque redéploiement. "
+                          "Ajoute un volume monté sur /data au service, puis redéploie.")
+    if env.get("DB_PATH"):
+        db_path = Path(env["DB_PATH"])
+    else:
+        db_path = Path(data_dir) / "draft.db" if data_dir else Path("draft.db")
+    backup_dir = Path(env.get("BACKUP_DIR") or db_path.resolve().parent / "sauvegardes")
+    return db_path, backup_dir
+
+
+def parse_guild_ids(env: dict) -> list[int]:
+    raw = (env.get("GUILD_IDS") or env.get("GUILD_ID") or "").replace(" ", "")
+    try:
+        return [int(x) for x in raw.split(",") if x]
+    except ValueError:
+        raise ConfigError(f"GUILD_IDS doit contenir des identifiants de serveur séparés par des virgules, pas « {raw} ».")
+
+
+def open_store(db_path: Path, wait_seconds: int = 60) -> Store:
+    """Ouvre la base. Pendant un redéploiement, attend que l'ancienne copie du bot s'arrête."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            return Store(str(db_path), exclusive=True)
+        except AlreadyRunning:
+            if time.monotonic() >= deadline:
+                raise ConfigError(f"Une autre copie du bot utilise déjà {db_path}. Arrête-la avant d'en lancer une autre.")
+            log.warning("La base est utilisée par une autre copie du bot, nouvel essai dans 2 secondes.")
+            time.sleep(2)
+
+
 def main() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
-    token = os.environ["DISCORD_TOKEN"]
-    raw_ids = os.environ.get("GUILD_IDS") or os.environ.get("GUILD_ID") or ""
-    guild_ids = [int(x) for x in raw_ids.replace(" ", "").split(",") if x]
-    db_path = os.environ.get("DB_PATH", "draft.db")
-    backup_dir = Path(os.environ.get("BACKUP_DIR") or Path(db_path).resolve().parent / "sauvegardes")
-    DraftBot(Store(db_path), guild_ids, backup_dir).run(token)
+    try:
+        token = os.environ.get("DISCORD_TOKEN", "").strip()
+        if not token:
+            raise ConfigError("DISCORD_TOKEN est vide : colle le jeton du bot dans .env (ou dans les variables Railway).")
+        guild_ids = parse_guild_ids(os.environ)
+        db_path, backup_dir = resolve_paths(os.environ)
+        log.info("Base du draft : %s · sauvegardes : %s", db_path.resolve(), backup_dir)
+        store = open_store(db_path)
+    except ConfigError as error:
+        log.error("%s", error)
+        raise SystemExit(1)
+    DraftBot(store, guild_ids, backup_dir).run(token)
 
 
 if __name__ == "__main__":
