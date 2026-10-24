@@ -1,5 +1,5 @@
 from draft_bot import formatting as fmt
-from draft_bot.storage import Player, Store
+from draft_bot.storage import Pick, Player, Store
 
 
 def make_store(players=None, order=None):
@@ -204,3 +204,22 @@ def test_undo_gives_a_fresh_clock_and_new_alert():
     deadline = store.deadline(1)
     assert deadline > 60
     assert store.expired_pick(1, now=deadline).number == 1
+
+
+def test_proud_team_agrees_with_article():
+    from draft_bot.formatting import proud_team
+    assert proud_team("Les Bruins de Boston") == ("Les Bruins de Boston", "sont fiers")
+    assert proud_team("Bruins de Boston") == ("Les Bruins de Boston", "sont fiers")
+    assert proud_team("le Canadien de Montréal") == ("Le Canadien de Montréal", "est fier")
+    assert proud_team("La Rivière") == ("La Rivière", "est fière")
+    assert proud_team("L'Avalanche") == ("L'Avalanche", "est fier")
+    assert proud_team("Laval") == ("Laval", "est fier")
+
+
+def test_announcement_rank_and_forced():
+    from draft_bot.formatting import announcement
+    pick = Pick(number=5, round=1, in_round=5, team="Boston", player_id=None, message_id=None)
+    text = announcement(pick, Player(id=1, name="David Pastrnak", team="Boston", position="AD"), True,
+                        "Les Bruins de Boston")
+    assert text.startswith("🏒 **Les Bruins de Boston** sont fiers de sélectionner **David Pastrnak** (Boston · AD)")
+    assert "au **5e rang** (ronde 1, choix 5)." in text and "admin" in text

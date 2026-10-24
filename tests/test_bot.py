@@ -5,6 +5,7 @@ import itertools
 
 import pytest
 
+import draft_bot.bot as bot_module
 from draft_bot.bot import DraftBot
 from draft_bot.storage import Store
 
@@ -111,9 +112,13 @@ class FakeInteraction:
         self.sent = []
         self.response = FakeResponse(self)
         self.followup = FakeFollowup(self)
+        self.deleted = False
 
     async def edit_original_response(self, **kwargs):
         self.sent.append((kwargs.get("content"), kwargs.get("view")))
+
+    async def delete_original_response(self):
+        self.deleted = True
 
     @property
     def last(self):
@@ -122,6 +127,11 @@ class FakeInteraction:
     @property
     def view(self):
         return self.sent[-1][1]
+
+
+@pytest.fixture(autouse=True)
+def no_waiting(monkeypatch):
+    monkeypatch.setattr(bot_module, "PICK_REPLY_SECONDS", 0)
 
 
 @pytest.fixture
@@ -164,10 +174,24 @@ def test_gm_on_the_clock_picks_after_confirming(league):
         assert store.made_picks_count(guild.id) == 0  # rien avant la confirmation
         await confirm(i)
         assert "✅" in i.last
-    run(scenario())
+        return i
+    i = run(scenario())
+    assert i.deleted  # la réponse privée s'efface : rien ne reste à fermer
     assert store.current_pick(guild.id).team == "Granby"
     announce = selections.texts()[-1]
-    assert "Patrick Roy" in announce and "<@&" in announce  # le rôle suivant est mentionné
+    assert "**Laval** est fier de sélectionner **Patrick Roy** (Granby · G) au **1er rang**" in announce
+    assert "<@&" in announce  # le rôle suivant est mentionné
+
+
+def test_announcement_uses_role_name(league):
+    bot, store, guild, gm_laval, _, selections = league
+    guild.roles[0].name = "Les Bruins de Boston"
+    store.set_order(guild.id, ["les bruins de boston", "granby"])
+
+    async def scenario():
+        await confirm(await command(bot, "draft", FakeInteraction(guild, gm_laval), "Lemieux"))
+    run(scenario())
+    assert "**Les Bruins de Boston** sont fiers de sélectionner **Mario Lemieux**" in selections.texts()[-1]
 
 
 def test_other_team_cannot_pick(league):
@@ -450,7 +474,6 @@ def test_renamed_commands_replace_old_ones_on_each_server():
 
 
 def test_wheel_is_public_and_logged(league, monkeypatch):
-    import draft_bot.bot as bot_module
     bot, store, guild, gm_laval, _, _ = league
     monkeypatch.setattr(bot_module, "WHEEL_SUSPENSE", 0)
     i = run(command(bot, "roue", FakeInteraction(guild, gm_laval), "ott, stl", "gambrell"))

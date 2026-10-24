@@ -27,6 +27,8 @@ NO_PINGS = discord.AllowedMentions.none()
 
 # Secondes de suspense avant d'afficher le résultat de la roue.
 WHEEL_SUSPENSE = 3
+# Temps d'affichage du « ✅ repêché » avant qu'il s'efface.
+PICK_REPLY_SECONDS = 8
 
 # Nombre de sauvegardes horaires gardées (deux jours).
 BACKUPS_KEPT = 48
@@ -549,7 +551,9 @@ def register_commands(bot: DraftBot) -> None:
             if channels is None:
                 problems.append("les salons du draft sont introuvables (refais `/salons`)")
             else:
-                text = fmt.announcement(pick, player, forced) + "\n" + bot.on_the_clock(interaction.guild)
+                role = bot.team_role(interaction.guild, pick.team)
+                text = (fmt.announcement(pick, player, forced, role.name if role else None)
+                        + "\n" + bot.on_the_clock(interaction.guild))
                 try:
                     message = await channels[1].send(text, allowed_mentions=PINGS)
                     store.set_pick_message(guild_id, pick.number, message.id)
@@ -565,7 +569,15 @@ def register_commands(bot: DraftBot) -> None:
         if problems:
             text += ("\n⚠️ Le choix est bien enregistré, mais " + " et ".join(problems)
                      + ". Vérifie les permissions du bot.")
-        await reply(interaction, text)
+            await reply(interaction, text)
+            return
+        # Tout s'est bien passé : la réponse privée s'efface d'elle-même, pour qu'il ne reste rien à fermer.
+        await interaction.edit_original_response(content=text + f" Annoncé dans {channels[1].mention}.", view=None)
+        await asyncio.sleep(PICK_REPLY_SECONDS)
+        try:
+            await interaction.delete_original_response()
+        except discord.HTTPException:
+            pass
 
     async def player_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         players = store.search_available(interaction.guild_id, current)

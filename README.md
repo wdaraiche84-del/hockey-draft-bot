@@ -8,10 +8,11 @@ Bot Discord qui gère le draft de ligues EHM / SHM. Ce projet est indépendant d
 - Chaque équipe a un **rôle Discord du même nom** (ex. rôle « Laval » pour l'équipe Laval). Les majuscules et les accents ne comptent pas.
 - Quand c'est le tour d'une équipe, le bot mentionne son rôle dans le salon **sélections**.
 - Un membre qui a ce rôle fait `/draft <joueur>`, puis clique **Confirmer**.
-- Le joueur disparaît de la liste, le choix est annoncé et l'équipe suivante est mentionnée.
+- Le joueur disparaît de la liste et le choix est annoncé dans le salon **sélections** : « 🏒 **Les Bruins de Boston** sont fiers de sélectionner **David Pastrnak** (Boston · AD) au **5e rang** (ronde 1, choix 5). » Puis l'équipe suivante est mentionnée.
+- L'annonce reprend le nom du rôle tel quel. Un nom qui commence par « Les », « Le », « La » ou « L' » est accordé (« Le Canadien de Montréal est fier »). Un nom d'un seul mot donne « Laval est fier », et un nom de plusieurs mots sans article reçoit « Les » devant.
 - Avec `/delai`, un délai s'affiche pour chaque choix. Une fois le délai écoulé, le bot mentionne le rôle admin, qui peut choisir avec `/forcedraft`.
 
-Les réponses du bot aux commandes sont privées : le salon de la liste reste propre.
+Les réponses du bot aux commandes sont privées : le salon de la liste reste propre. Après un choix réussi, la réponse privée « ✅ repêché » s'efface toute seule après quelques secondes.
 
 ## Commandes
 
