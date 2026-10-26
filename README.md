@@ -4,33 +4,44 @@ Bot Discord qui gère le draft de ligues EHM / SHM. Ce projet est indépendant d
 
 ## Fonctionnement
 
-- Le salon **liste** affiche les joueurs disponibles dans des messages du bot.
-- Chaque équipe a un **rôle Discord du même nom** (ex. rôle « Laval » pour l'équipe Laval). Les majuscules et les accents ne comptent pas.
-- Quand c'est le tour d'une équipe, le bot mentionne son rôle dans le salon **sélections**.
-- Un membre qui a ce rôle fait `/draft <joueur>`, puis clique **Confirmer**.
-- Le joueur disparaît de la liste et le choix est annoncé dans le salon **sélections** : « 🏒 **Les Bruins de Boston** sont fiers de sélectionner **David Pastrnak** (Boston · AD) au **5e rang** (ronde 1, choix 5). » Puis l'équipe suivante est mentionnée.
-- L'annonce reprend le nom du rôle tel quel. Un nom qui commence par « Les », « Le », « La » ou « L' » est accordé (« Le Canadien de Montréal est fier »). Un nom d'un seul mot donne « Laval est fier », et un nom de plusieurs mots sans article reçoit « Les » devant.
-- Avec `/delai`, un délai s'affiche pour chaque choix. Une fois le délai écoulé, le bot mentionne le rôle admin, qui peut choisir avec `/forcedraft`.
+Le bot est fait pour rester simple : les DG cliquent sur des boutons, et les admins font tout depuis un seul panneau.
 
-Les réponses du bot aux commandes sont privées : le salon de la liste reste propre. Après un choix réussi, la réponse privée « ✅ repêché » s'efface toute seule après quelques secondes.
+- Chaque équipe a un **rôle Discord du même nom** (ex. rôle « Laval » pour l'équipe Laval). Les majuscules et les accents ne comptent pas.
+- Le salon **liste** affiche les joueurs disponibles dans des messages du bot.
+- Quand c'est le tour d'une équipe, le bot mentionne son rôle dans le salon **sélections**, avec un bouton vert **🏒 Faire mon choix**.
+- Le DG clique sur le bouton, choisit le joueur dans le menu, puis clique **Confirmer**. S'il y a plus de 25 joueurs, une petite fenêtre lui demande quelques lettres du nom, puis le bot montre les joueurs trouvés.
+- Le joueur disparaît de la liste et le choix est annoncé : « 🏒 **Les Bruins de Boston** sont fiers de sélectionner **David Pastrnak** (Boston · AD) au **5e rang** (ronde 1, choix 5). » L'équipe suivante est mentionnée, avec le bouton. Le bouton est retiré de l'annonce précédente : un seul bouton reste en vue.
+- L'annonce reprend le nom du rôle tel quel. Un nom qui commence par « Les », « Le », « La » ou « L' » est accordé (« Le Canadien de Montréal est fier »). Un nom d'un seul mot donne « Laval est fier », et un nom de plusieurs mots sans article reçoit « Les » devant.
+- Avec un délai, le temps limite s'affiche pour chaque choix. Une fois le délai écoulé, le bot mentionne le rôle admin, qui peut choisir depuis le panneau.
+
+Les réponses du bot sont privées : les salons restent propres. Après un choix réussi, la réponse privée « ✅ repêché » s'efface toute seule après quelques secondes.
 
 ## Commandes
 
 | Commande | Qui | Rôle |
 | --- | --- | --- |
-| `/salons liste selections` | Admin | Choisir les deux salons |
-| `/joueurs fichier` | Admin | Importer les joueurs et publier la liste |
-| `/ordre equipes rondes serpentin` | Admin | Définir l'ordre (ou `fichier` avec l'ordre complet, une équipe par ligne) |
-| `/delai delai admin` | Admin | Délai par choix (`8h`, `90m`, `1h30`, `0` pour aucun) et rôle à avertir |
-| `/echange numero equipe` | Admin | Donner un choix à une autre équipe |
-| `/draft joueur` | Équipe au tour | Repêcher un joueur |
-| `/forcedraft joueur` | Admin | Repêcher pour l'équipe au tour |
-| `/annuler-choix` | Admin | Annuler le dernier choix |
-| `/statut` | Tous | Voir qui est au tour, le temps limite et les prochains choix |
+| `/admin` | Admin | Ouvre le panneau admin : préparer et gérer le draft |
+| `/aide` | Tous | Explique en quelques lignes comment faire son choix |
+| `/statut` | Tous | Qui est au tour, le temps limite et les prochains choix. L'équipe au tour y trouve aussi le bouton **Faire mon choix** |
+| `/draft joueur` | Équipe au tour | Pour ceux qui préfèrent taper : repêcher un joueur par son nom |
 | `/roue choix titre` | Tous | Tirer au sort une option, chances égales (ex. : `ott, stl`, titre `gambrell`). Résultat public et noté au journal |
-| `/journal` | Admin | Télécharger le journal de toutes les actions (fichier Excel/CSV) |
 
-« Admin » veut dire la permission *Gérer le serveur*, vérifiée à chaque utilisation. Toute action qui change le draft demande une confirmation par bouton.
+« Admin » veut dire la permission *Gérer le serveur*, revérifiée à chaque clic. Toute action qui change le draft demande une confirmation par bouton.
+
+### Le panneau `/admin`
+
+Le panneau montre l'état du draft avec des ✅ et des ❌, et la prochaine étape à faire. Il se met à jour tout seul après chaque changement.
+
+**Préparer le draft** (dans l'ordre) :
+
+1. **Salons** : choisir dans deux menus le salon de la liste et le salon des annonces.
+2. **Joueurs** : envoyer le fichier des joueurs (voir plus bas).
+3. **Ordre** : écrire les équipes de la 1re ronde, le nombre de rondes, et si l'ordre s'inverse à chaque ronde (serpentin).
+4. **Délai** (facultatif) : le temps pour chaque choix (`8h`, `90m`, `1h30`, `0` pour aucun) et le rôle à avertir.
+
+**Pendant le draft** : **Choisir pour l'équipe au tour**, **Annuler le dernier choix**, **Échanger un choix** (numéro du choix + rôle de la nouvelle équipe), **Journal** (fichier Excel/CSV de toutes les actions) et **Actualiser**.
+
+Le panneau se ferme après 14 minutes (limite de Discord) : refaire `/admin` pour le rouvrir.
 
 ### Fichier des joueurs
 
@@ -42,9 +53,9 @@ Patrick Roy;Granby;G
 Mario Lemieux;Laval;C
 ```
 
-### Fichier d'ordre
+### Ordre avec des choix échangés
 
-Une équipe par ligne, dans l'ordre complet du draft. Les choix échangés sont simplement écrits au nom de leur nouveau propriétaire.
+Dans **3. Ordre**, écrire tous les choix du draft dans l'ordre, une équipe par ligne, et mettre **1** ronde. Les choix échangés sont simplement écrits au nom de leur nouveau propriétaire.
 
 ```
 Laval
@@ -53,13 +64,15 @@ Granby
 Laval
 ```
 
-Réimporter la liste ou redéfinir l'ordre remet le draft à zéro. Le bot demande une confirmation et fait une sauvegarde avant.
+Un choix peut aussi être échangé plus tard avec **Échanger un choix**.
+
+Réimporter la liste ou redéfinir l'ordre remet le draft à zéro. Le bot le dit, demande une confirmation et fait une sauvegarde avant.
 
 ## Fiabilité
 
 - **Un choix à la fois** : le bot revérifie, au moment du clic sur Confirmer, que c'est encore le tour de ce choix, que le membre a encore le rôle et que le joueur est encore disponible. Deux confirmations en même temps ne peuvent pas prendre le même joueur ni sauter un tour.
 - **Rien ne se perd au redémarrage** : le draft, le chrono et le journal sont dans la base `draft.db`. Une alerte de délai manquée pendant que le bot était éteint part dès son retour.
-- **Sauvegardes automatiques** dans le dossier `sauvegardes` : au démarrage, chaque heure, et avant chaque `/joueurs` ou `/ordre`. Les 48 plus récentes sont gardées. Pour revenir en arrière, arrêter le bot, remplacer `draft.db` par une sauvegarde renommée `draft.db`, puis relancer.
+- **Sauvegardes automatiques** dans le dossier `sauvegardes` : au démarrage, chaque heure, et avant chaque import de joueurs ou nouvel ordre. Les 48 plus récentes sont gardées. Pour revenir en arrière, arrêter le bot, remplacer `draft.db` par une sauvegarde renommée `draft.db`, puis relancer.
 - **Serveurs autorisés** : le bot quitte tout seul un serveur qui n'est pas dans `GUILD_IDS`. Les commandes y sont publiées serveur par serveur, et les anciennes commandes globales sont effacées au démarrage pour éviter les doublons.
 
 ## Installation
@@ -76,7 +89,18 @@ copy .env.example .env        # puis remplir DISCORD_TOKEN et GUILD_IDS
 python -m draft_bot
 ```
 
-6. Dans Discord : `/salons`, `/joueurs`, `/ordre`, puis `/delai` si on veut un délai.
+6. Dans Discord : `/admin`, puis suivre les étapes 1, 2, 3 (et 4 pour un délai).
+
+### Mettre à jour le bot
+
+Après avoir remplacé le dossier `draft_bot` et le fichier `requirements.txt` par la nouvelle version, mettre à jour les bibliothèques une fois (le panneau admin demande discord.py 2.7 ou plus), puis relancer :
+
+```
+pip install -U -r requirements.txt
+python -m draft_bot
+```
+
+Garder `.env` et `draft.db` : le draft en cours est conservé.
 
 ### Ajouter un serveur autorisé
 

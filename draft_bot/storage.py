@@ -53,6 +53,7 @@ CONFIG_COLUMNS = {
     "clock_pick": "INTEGER",
     "clock_started": "REAL",
     "clock_alerted": "INTEGER NOT NULL DEFAULT 0",
+    "button_message_id": "INTEGER",
 }
 
 
@@ -237,6 +238,17 @@ class Store:
             "SELECT COUNT(*) FROM picks WHERE guild_id = ? AND player_id IS NOT NULL", (guild_id,)
         ).fetchone()[0]
 
+    def pick_count(self, guild_id: int) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM picks WHERE guild_id = ?", (guild_id,)).fetchone()[0]
+
+    def order_teams(self, guild_id: int) -> list[str]:
+        """Les équipes de l'ordre, une seule fois chacune, dans l'ordre de leur premier choix."""
+        rows = self.db.execute("SELECT team FROM picks WHERE guild_id = ? ORDER BY number", (guild_id,)).fetchall()
+        return list(dict.fromkeys(row[0] for row in rows))
+
+    def player_count(self, guild_id: int) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM players WHERE guild_id = ?", (guild_id,)).fetchone()[0]
+
     def get_pick(self, guild_id: int, number: int) -> Pick | None:
         picks = self._picks("WHERE guild_id = ? AND number = ?", (guild_id, number))
         return picks[0] if picks else None
@@ -361,6 +373,21 @@ class Store:
     def timed_guilds(self) -> list[int]:
         rows = self.db.execute("SELECT guild_id FROM config WHERE pick_seconds > 0").fetchall()
         return [row[0] for row in rows]
+
+    # Bouton « Faire mon choix »
+
+    def button_message(self, guild_id: int) -> int | None:
+        """Le dernier message public qui porte le bouton « Faire mon choix »."""
+        row = self.db.execute("SELECT button_message_id FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return row[0] if row else None
+
+    def set_button_message(self, guild_id: int, message_id: int | None) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, button_message_id) VALUES (?, ?) "
+                "ON CONFLICT (guild_id) DO UPDATE SET button_message_id = excluded.button_message_id",
+                (guild_id, message_id),
+            )
 
     # Journal et sauvegardes
 
