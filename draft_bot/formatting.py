@@ -152,7 +152,7 @@ def on_the_clock(pick: Pick | None, ping: str, deadline: float | None = None) ->
 
 def time_up(pick: Pick, admin_ping: str) -> str:
     text = f"⏰ Temps écoulé pour **{escape_markdown(pick.team)}** ({pick_label(pick)})."
-    text += " Un admin peut faire le choix avec `/forcedraft`."
+    text += " Un admin peut faire le choix : `/admin`, puis **Choisir pour l'équipe au tour**."
     return f"{admin_ping} {text}" if admin_ping else text
 
 
