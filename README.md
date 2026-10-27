@@ -109,6 +109,18 @@ Garder `.env` et `draft.db` : le draft en cours est conservé.
 3. Ajouter cet identifiant à `GUILD_IDS` dans `.env`, séparé des autres par une virgule.
 4. Redémarrer le bot, puis l'inviter sur le serveur.
 
+## Serveur support et de test
+
+Un petit programme remplit un serveur Discord **vide** pour en faire le serveur support du bot et un terrain de test du draft. Ce n'est pas une commande du bot : les ligues n'y ont jamais accès.
+
+1. Dans Discord, créer un serveur (« Créer le mien »), puis y inviter le bot avec la permission *Administrateur*.
+2. Ajouter l'identifiant du serveur à `GUILD_IDS` dans `.env`.
+3. Dans le dossier du bot : `python -m draft_bot.creer_serveur`, choisir le serveur dans la liste, puis taper `oui`.
+
+Le programme crée trois catégories (Informations : bienvenue, règles, annonces · Support : aide, bugs, suggestions · Tests du draft : liste, sélections, commandes), les rôles *Support*, *Testeurs* et quatre équipes de test, et des messages épinglés. Le propriétaire du serveur reçoit Support et les équipes de test, pour faire tous les choix lui-même. Le salon `test-commandes` explique comment préparer le draft de test avec `/admin` et contient le fichier `joueurs-test.csv`.
+
+Par sécurité, le programme refuse un serveur qui a déjà plus de trois salons. Ce qui existe déjà avec le même nom est gardé : le relancer après une erreur termine le travail sans rien doubler.
+
 ## Hébergement sur Railway
 
 Le dépôt est prêt pour Railway : `railway.json` donne la commande de démarrage (`python -m draft_bot`) et redémarre le bot s'il plante, et `.python-version` fixe Python 3.12.
