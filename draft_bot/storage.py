@@ -54,6 +54,7 @@ CONFIG_COLUMNS = {
     "clock_started": "REAL",
     "clock_alerted": "INTEGER NOT NULL DEFAULT 0",
     "button_message_id": "INTEGER",
+    "started": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -124,6 +125,10 @@ class Store:
             for name, definition in CONFIG_COLUMNS.items():
                 if name not in existing:
                     self.db.execute(f"ALTER TABLE config ADD COLUMN {name} {definition}")
+            if "started" not in existing:
+                # Avant le bouton « Lancer le draft », définir l'ordre lançait le draft :
+                # un draft déjà commencé dans une ancienne base continue sans rien changer.
+                self.db.execute("UPDATE config SET started = 1 WHERE guild_id IN (SELECT guild_id FROM picks)")
 
     # Salons
 
@@ -195,9 +200,17 @@ class Store:
     # Ordre et choix
 
     def set_order(self, guild_id: int, teams: list[str]) -> int:
-        """Remplace l'ordre de sélection. Retourne le nombre d'équipes par ronde."""
+        """Remplace l'ordre de sélection. Retourne le nombre d'équipes par ronde.
+
+        Le nouveau draft attend que l'admin clique sur « Lancer le draft ».
+        """
         per_round = len({normalize(t) for t in teams})
         with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, started) VALUES (?, 0) "
+                "ON CONFLICT (guild_id) DO UPDATE SET started = 0",
+                (guild_id,),
+            )
             self.db.execute("DELETE FROM picks WHERE guild_id = ?", (guild_id,))
             self.db.execute("UPDATE players SET drafted = 0 WHERE guild_id = ?", (guild_id,))
             self.db.executemany(
@@ -210,6 +223,24 @@ class Store:
         self.start_clock(guild_id)
         return per_round
 
+    def start_draft(self, guild_id: int) -> bool:
+        """Lance le draft. Retourne False s'il était déjà lancé ou s'il n'y a pas d'ordre."""
+        if self.pick_count(guild_id) == 0:
+            return False
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO config (guild_id) VALUES (?)", (guild_id,))
+            cur = self.db.execute(
+                "UPDATE config SET started = 1 WHERE guild_id = ? AND started = 0", (guild_id,)
+            )
+        if cur.rowcount != 1:
+            return False
+        self.start_clock(guild_id)
+        return True
+
+    def is_started(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT started FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0])
+
     def _picks(self, sql: str, params: tuple) -> list[Pick]:
         rows = self.db.execute(
             "SELECT number, round, in_round, team, player_id, message_id FROM picks " + sql, params
@@ -217,6 +248,9 @@ class Store:
         return [Pick(*row) for row in rows]
 
     def current_pick(self, guild_id: int) -> Pick | None:
+        """Le choix à faire maintenant. Aucun tant que le draft n'est pas lancé."""
+        if not self.is_started(guild_id):
+            return None
         picks = self._picks(
             "WHERE guild_id = ? AND player_id IS NULL ORDER BY number LIMIT 1", (guild_id,)
         )

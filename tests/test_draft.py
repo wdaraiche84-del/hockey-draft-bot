@@ -1,5 +1,9 @@
+import time
+
+import pytest
+
 from draft_bot import formatting as fmt
-from draft_bot.storage import Pick, Player, Store
+from draft_bot.storage import Pick, PickError, Player, Store
 
 
 def make_store(players=None, order=None):
@@ -7,6 +11,7 @@ def make_store(players=None, order=None):
     store.replace_players(1, players or [("Sidney Crosby", "Halifax", "C"), ("Jérôme Iginla", "Kamloops", "AD"),
                                          ("Patrick Roy", "Granby", "G")])
     store.set_order(1, order or ["MTL", "TOR"])
+    store.start_draft(1)
     return store
 
 
@@ -117,6 +122,7 @@ def test_guilds_are_independent():
     store = make_store()
     store.replace_players(2, [("Autre Joueur", "X", "C")])
     store.set_order(2, ["A"])
+    store.start_draft(2)
     store.make_pick(2, 1, store.available_players(2)[0].id)
     assert len(store.available_players(1)) == 3
     assert store.current_pick(1).number == 1
@@ -223,3 +229,38 @@ def test_announcement_rank_and_forced():
                         "Les Bruins de Boston")
     assert text.startswith("🏒 **Les Bruins de Boston** sont fiers de sélectionner **David Pastrnak** (Boston · AD)")
     assert "au **5e rang** (ronde 1, choix 5)." in text and "admin" in text
+
+
+def test_order_waits_for_launch_and_old_databases_keep_running(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "draft.db")
+    store = Store(path)
+    store.set_order(1, ["MTL", "TOR"])
+    assert not store.is_started(1) and store.current_pick(1) is None and store.deadline(1) is None
+    with pytest.raises(PickError):
+        store.make_pick(1, 1, 1)
+    store.set_order(2, ["A"])
+    store.start_draft(2)
+    store.db.close()
+    # Une base d'avant le bouton « Lancer » : la colonne n'existe pas encore.
+    db = sqlite3.connect(path)
+    db.execute("ALTER TABLE config DROP COLUMN started")
+    db.execute("INSERT INTO config (guild_id) VALUES (3)")  # serveur sans ordre
+    db.commit()
+    db.close()
+    store = Store(path)
+    # Un draft déjà commencé continue ; un serveur sans ordre attend son lancement.
+    assert store.is_started(1) and store.current_pick(1).team == "MTL"
+    assert store.is_started(2) and not store.is_started(3)
+    assert not store.start_draft(3)  # pas d'ordre : rien à lancer
+
+
+def test_launch_starts_the_clock_once():
+    store = Store(":memory:")
+    store.set_timer(1, 60, None)
+    store.set_order(1, ["MTL", "TOR"])
+    assert store.expired_pick(1, now=time.time() + 3600) is None
+    assert store.start_draft(1) and not store.start_draft(1)
+    assert store.expired_pick(1, now=time.time() + 3600).team == "MTL"
+    store.set_order(1, ["TOR"])  # nouvel ordre : le draft attend un nouveau lancement
+    assert not store.is_started(1) and store.current_pick(1) is None

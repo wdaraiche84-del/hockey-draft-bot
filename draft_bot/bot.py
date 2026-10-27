@@ -170,6 +170,20 @@ class DraftBot(discord.Client):
                 pass
         return message
 
+    async def remove_pick_button(self, guild: discord.Guild) -> None:
+        old = self.store.button_message(guild.id)
+        if not old:
+            return
+        self.store.set_button_message(guild.id, None)
+        channels = self.channels(guild)
+        if channels is None:
+            return
+        try:
+            await channels[1].get_partial_message(old).edit(view=None)
+        except discord.HTTPException:
+            # Message effacé : rien à retirer. Un clic sur un vieux bouton est de toute façon refusé.
+            pass
+
     async def announce(self, guild: discord.Guild, text: str, with_clock: bool = True) -> str:
         """Publie un message dans le salon des sélections, en mentionnant l'équipe au tour.
 
@@ -177,7 +191,7 @@ class DraftBot(discord.Client):
         """
         channels = self.channels(guild)
         if channels is None:
-            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (`/admin`, puis **1. Salons**)."
+            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (`/admin`, puis **Plus d'options**, **Changer les salons**)."
         try:
             if with_clock:
                 await self.post_with_clock(guild, channels[1], text)
@@ -194,9 +208,15 @@ class DraftBot(discord.Client):
     def forget_panel(self, guild_id: int, panel: "AdminPanel") -> None:
         self.panels[guild_id].discard(panel)
 
-    async def refresh_panels(self, guild: discord.Guild) -> None:
-        """Après un changement, les panneaux admin ouverts montrent tout de suite les nouveaux ✅."""
+    async def refresh_panels(self, guild: discord.Guild, actor_id: int | None = None) -> None:
+        """Après un changement, les panneaux admin ouverts montrent tout de suite le nouvel état.
+
+        Le panneau de l'admin qui vient d'agir revient à l'écran principal, pour lui montrer
+        la prochaine étape. Celui d'un autre admin reste où il est.
+        """
         for panel in list(self.panels[guild.id]):
+            if actor_id is not None and panel.user_id == actor_id:
+                panel.more = False
             await panel.refresh(guild)
 
     def backup(self, reason: str) -> None:
@@ -400,9 +420,15 @@ async def check_turn(bot: DraftBot, interaction: discord.Interaction, forced: bo
     if not bot.channels(interaction.guild):
         await reply(interaction, "Le draft n'est pas encore prêt. Un admin doit le préparer avec `/admin`.")
         return None
+    if not bot.store.is_started(interaction.guild_id):
+        text = "Le draft n'est pas encore commencé. Attends l'annonce du début du draft."
+        if is_admin(interaction.user):
+            text += f"\n*Admin : le panneau `/admin` montre la prochaine étape, jusqu'à **▶ {LAUNCH_STEP}**.*"
+        await reply(interaction, text)
+        return None
     pick = bot.store.current_pick(interaction.guild_id)
     if pick is None:
-        await reply(interaction, "Aucun choix en attente : l'ordre n'est pas encore défini, ou le draft est terminé.")
+        await reply(interaction, "Aucun choix en attente : le draft est terminé.")
         return None
     if not forced and not bot.is_on_the_clock(interaction.user, pick.team):
         text = "Ce n'est pas ton tour.\n" + bot.on_the_clock(interaction.guild)
@@ -489,7 +515,7 @@ async def finish_pick(bot: DraftBot, interaction: discord.Interaction, number: i
             return
         channels = bot.channels(interaction.guild)
         if channels is None:
-            problems.append("les salons du draft sont introuvables (`/admin`, puis **1. Salons**)")
+            problems.append("les salons du draft sont introuvables (`/admin`, puis **Plus d'options**, **Changer les salons**)")
         else:
             role = bot.team_role(interaction.guild, pick.team)
             text = fmt.announcement(pick, player, forced, role.name if role else None)
@@ -504,7 +530,7 @@ async def finish_pick(bot: DraftBot, interaction: discord.Interaction, number: i
             except discord.HTTPException as error:
                 log.exception("Liste impossible à mettre à jour", exc_info=error)
                 problems.append(f"la liste dans {channels[0].mention} n'a pas pu être mise à jour")
-    await bot.refresh_panels(interaction.guild)
+    await bot.refresh_panels(interaction.guild, interaction.user.id)
     text = f"✅ **{escape_markdown(player.name)}** repêché par **{escape_markdown(pick.team)}**."
     if problems:
         text += ("\n⚠️ Le choix est bien enregistré, mais " + " et ".join(problems)
@@ -609,7 +635,7 @@ class SearchModal(BotModal):
 
 class ChannelsModal(BotModal):
     def __init__(self, bot: DraftBot, current: tuple[int, int] | None):
-        super().__init__(bot, "1. Salons du draft")
+        super().__init__(bot, "Salons du draft")
         defaults = [[discord.Object(id=c, type=discord.TextChannel)] for c in current] if current else [[], []]
         self.list_channel = self.ask(
             "Salon de la liste des joueurs",
@@ -628,7 +654,7 @@ class ChannelsModal(BotModal):
 
 class PlayersModal(BotModal):
     def __init__(self, bot: DraftBot):
-        super().__init__(bot, "2. Joueurs repêchables")
+        super().__init__(bot, "Joueurs repêchables")
         self.file = self.ask("Fichier des joueurs", discord.ui.FileUpload(max_values=1),
                              "Une ligne par joueur : Nom;Équipe actuelle;Position (CSV ou texte).")
 
@@ -638,7 +664,7 @@ class PlayersModal(BotModal):
 
 class OrderModal(BotModal):
     def __init__(self, bot: DraftBot):
-        super().__init__(bot, "3. Ordre du draft")
+        super().__init__(bot, "Ordre du draft")
         self.teams = self.ask(
             "Équipes, dans l'ordre de la 1re ronde",
             discord.ui.TextInput(style=discord.TextStyle.paragraph, max_length=4000,
@@ -661,7 +687,7 @@ class OrderModal(BotModal):
 
 class DelayModal(BotModal):
     def __init__(self, bot: DraftBot, seconds: int, admin_role_id: int | None):
-        super().__init__(bot, "4. Délai par choix")
+        super().__init__(bot, "Délai par choix")
         self.delay = self.ask(
             "Temps pour chaque choix",
             discord.ui.TextInput(default=fmt.duration_text(seconds).replace(" ", "") if seconds else None,
@@ -696,7 +722,7 @@ class TradeModal(BotModal):
 async def save_channels(bot: DraftBot, interaction: discord.Interaction, liste, selections) -> None:
     store = bot.store
     if liste is None or selections is None:
-        await reply(interaction, "Salon introuvable. Le bot voit-il ce salon ? Réessaie avec **1. Salons**.")
+        await reply(interaction, "Salon introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
         return
     if liste.id == selections.id:
         await reply(interaction, "Choisis deux salons différents : un pour la liste, un pour les annonces.")
@@ -714,14 +740,14 @@ async def save_channels(bot: DraftBot, interaction: discord.Interaction, liste, 
     store.add_log(interaction.guild_id, interaction.user.id, "salons", f"{liste.name} / {selections.name}")
     await reply(interaction, f"✅ Liste dans {liste.mention}, annonces dans {selections.mention}."
                 + next_step_hint(bot, interaction.guild))
-    await bot.refresh_panels(interaction.guild)
+    await bot.refresh_panels(interaction.guild, interaction.user.id)
 
 
 async def import_players(bot: DraftBot, interaction: discord.Interaction, fichier: discord.Attachment) -> None:
     store = bot.store
     guild_id = interaction.guild_id
     if not bot.channels(interaction.guild):
-        await reply(interaction, "Fais d'abord l'étape **1. Salons**.")
+        await reply(interaction, "Choisis d'abord les salons du draft dans `/admin`.")
         return
     if fichier.size > MAX_FILE_BYTES:
         await reply(interaction, "Ce fichier est trop gros pour une liste de joueurs. Envoie un fichier CSV ou texte.")
@@ -737,7 +763,7 @@ async def import_players(bot: DraftBot, interaction: discord.Interaction, fichie
     async def confirmed(button_interaction: discord.Interaction) -> None:
         channels = bot.channels(interaction.guild)
         if not channels:
-            await reply(button_interaction, "Les salons du draft ne sont plus accessibles. Refais **1. Salons**.")
+            await reply(button_interaction, "Les salons du draft ne sont plus accessibles. Choisis-les de nouveau dans `/admin`.")
             return
         async with bot.locks[guild_id]:
             bot.backup("avant-liste")
@@ -746,7 +772,7 @@ async def import_players(bot: DraftBot, interaction: discord.Interaction, fichie
             await bot.refresh_list(guild_id, channels[0], repost=True)
         await reply(button_interaction, f"✅ {len(rows)} joueurs publiés dans {channels[0].mention}."
                     + next_step_hint(bot, interaction.guild))
-        await bot.refresh_panels(interaction.guild)
+        await bot.refresh_panels(interaction.guild, interaction.user.id)
 
     text = f"Importer **{len(rows)} joueurs** ? Les premiers :\n{preview}"
     if duplicates:
@@ -760,11 +786,11 @@ async def define_order(bot: DraftBot, interaction: discord.Interaction, teams_te
     guild_id = interaction.guild_id
     rounds_text = rounds_text or "1"
     if not rounds_text.isdigit() or not 1 <= int(rounds_text) <= 50:
-        await reply(interaction, "Le nombre de rondes doit être un nombre entre 1 et 50. Réessaie avec **3. Ordre**.")
+        await reply(interaction, "Le nombre de rondes doit être un nombre entre 1 et 50. Réessaie dans `/admin`.")
         return
     first_round = fmt.parse_order(teams_text)
     if not first_round:
-        await reply(interaction, "Aucune équipe trouvée. Écris une équipe par ligne. Réessaie avec **3. Ordre**.")
+        await reply(interaction, "Aucune équipe trouvée. Écris une équipe par ligne. Réessaie dans `/admin`.")
         return
     order = fmt.build_order(first_round, int(rounds_text), snake)
     teams = sorted({team_display(t) for t in order})
@@ -779,9 +805,11 @@ async def define_order(bot: DraftBot, interaction: discord.Interaction, teams_te
             channels = bot.channels(interaction.guild)
             if channels and store.list_messages(guild_id):
                 await bot.refresh_list(guild_id, channels[0])
-            announced = await bot.announce(interaction.guild, "🏒 **Le draft commence!**")
-        await reply(button_interaction, f"✅ {len(order)} choix, {per_round} équipes par ronde." + announced)
-        await bot.refresh_panels(interaction.guild)
+            # Le bouton « Faire mon choix » de l'ancien ordre ne doit plus rester en vue.
+            await bot.remove_pick_button(interaction.guild)
+        await reply(button_interaction, f"✅ {len(order)} choix, {per_round} équipes par ronde."
+                    + next_step_hint(bot, interaction.guild))
+        await bot.refresh_panels(interaction.guild, interaction.user.id)
 
     text = f"Définir un ordre de **{len(order)} choix** pour {len(teams)} équipes : {', '.join(teams)} ?"
     if missing:
@@ -789,6 +817,36 @@ async def define_order(bot: DraftBot, interaction: discord.Interaction, teams_te
                  + ". Ces équipes ne pourront pas faire leur choix elles-mêmes. "
                  "Vérifie l'orthographe ou crée le rôle.")
     await ask_confirmation(interaction, text + reset_warning(store, guild_id), confirmed)
+
+
+async def launch_draft(bot: DraftBot, interaction: discord.Interaction) -> None:
+    store = bot.store
+    guild_id = interaction.guild_id
+    if store.is_started(guild_id):
+        await reply(interaction, "Le draft est déjà lancé.")
+        return
+    channels = bot.channels(interaction.guild)
+    first = store.upcoming_picks(guild_id, 1)
+    if channels is None or not first or store.player_count(guild_id) == 0:
+        await reply(interaction, "Le draft n'est pas encore prêt." + next_step_hint(bot, interaction.guild))
+        return
+
+    async def confirmed(button_interaction: discord.Interaction) -> None:
+        async with bot.locks[guild_id]:
+            if not store.start_draft(guild_id):
+                await reply(button_interaction, "Le draft est déjà lancé, ou l'ordre a été effacé. Rien n'a changé.")
+                return
+            store.add_log(guild_id, interaction.user.id, "lancement", f"{store.pick_count(guild_id)} choix")
+            announced = await bot.announce(interaction.guild, "🏒 **Le draft commence!**")
+        await reply(button_interaction, "✅ Le draft est lancé!" + announced)
+        await bot.refresh_panels(interaction.guild, interaction.user.id)
+
+    await ask_confirmation(
+        interaction,
+        f"Lancer le draft maintenant ? **{escape_markdown(first[0].team)}** sera averti que c'est son tour "
+        f"dans {channels[1].mention}.",
+        confirmed,
+    )
 
 
 async def set_delay(bot: DraftBot, interaction: discord.Interaction, delay_text: str,
@@ -817,7 +875,7 @@ async def set_delay(bot: DraftBot, interaction: discord.Interaction, delay_text:
             "\n⚠️ Aucun rôle choisi : l'alerte ne mentionnera personne.")
         text += announced
     await reply(interaction, text)
-    await bot.refresh_panels(interaction.guild)
+    await bot.refresh_panels(interaction.guild, interaction.user.id)
 
 
 async def trade_pick(bot: DraftBot, interaction: discord.Interaction, number_text: str, team: discord.Role) -> None:
@@ -854,7 +912,7 @@ async def trade_pick(bot: DraftBot, interaction: discord.Interaction, number_tex
             )
         await reply(button_interaction,
                     f"✅ Le choix #{numero} appartient maintenant à **{team_display(equipe)}**." + announced)
-        await bot.refresh_panels(interaction.guild)
+        await bot.refresh_panels(interaction.guild, interaction.user.id)
 
     await ask_confirmation(
         interaction,
@@ -892,7 +950,7 @@ async def undo_last_pick(bot: DraftBot, interaction: discord.Interaction) -> Non
                     f"↩️ {fmt.pick_label(last)} annulé : **{escape_markdown(player.name)}** retourne dans la liste.",
                 )
         await reply(button_interaction, f"✅ {fmt.pick_label(last)} annulé.")
-        await bot.refresh_panels(interaction.guild)
+        await bot.refresh_panels(interaction.guild, interaction.user.id)
 
     await ask_confirmation(
         interaction,
@@ -920,69 +978,179 @@ async def send_journal(bot: DraftBot, interaction: discord.Interaction) -> None:
                 file=discord.File(data, filename="journal-draft.csv"))
 
 
-# Le panneau admin : l'état du draft en ✅ / ❌, et un bouton par action.
+# Le panneau admin : un seul bouton pour la prochaine étape, le reste rangé dans « Plus d'options ».
 
-def setup_steps(bot: DraftBot, guild: discord.Guild) -> list[tuple[bool, str, str]]:
-    """Les étapes de préparation : (faite, nom du bouton, détail)."""
+# Les étapes de préparation, dans l'ordre : (clé, nom du bouton, explication).
+SETUP_STEPS = [
+    ("salons", "Choisir les salons",
+     "Choisis le salon de la liste des joueurs et celui des annonces de choix."),
+    ("joueurs", "Importer les joueurs",
+     "Envoie le fichier des joueurs repêchables : une ligne par joueur, `Nom;Équipe actuelle;Position`."),
+    ("ordre", "Définir l'ordre du draft",
+     "Écris les équipes dans l'ordre de la 1re ronde et le nombre de rondes."),
+]
+LAUNCH_STEP = "Lancer le draft"
+MORE_OPTIONS = "Plus d'options"
+CHANGE_CHANNELS = "Changer les salons"
+
+
+def missing_setup_step(bot: DraftBot, guild: discord.Guild) -> int | None:
+    """L'index de la première étape de préparation pas encore faite, ou None."""
     store = bot.store
-    channels = bot.channels(guild)
-    players = store.player_count(guild.id)
-    picks = store.pick_count(guild.id)
-    steps = [
-        (channels is not None, "1. Salons",
-         f"liste dans {channels[0].mention}, annonces dans {channels[1].mention}" if channels
-         else "pas encore choisis"),
-        (players > 0, "2. Joueurs",
-         f"{players} joueurs, {len(store.available_players(guild.id))} encore disponibles" if players
-         else "aucun joueur importé"),
-    ]
-    if picks:
-        detail = f"{picks} choix, {store.made_picks_count(guild.id)} déjà faits"
-        missing = [t for t in store.order_teams(guild.id) if bot.team_role(guild, t) is None]
-        if missing:
-            detail += "\n   ⚠️ Aucun rôle Discord pour : " + ", ".join(escape_markdown(t) for t in missing)
-        steps.append((True, "3. Ordre", detail))
-    else:
-        steps.append((False, "3. Ordre", "pas encore défini"))
-    return steps
+    done = [bot.channels(guild) is not None, store.player_count(guild.id) > 0, store.pick_count(guild.id) > 0]
+    return next((i for i, ok in enumerate(done) if not ok), None)
+
+
+def panel_phase(bot: DraftBot, guild: discord.Guild) -> str:
+    """Où en est le draft : « préparation », « prêt », « en cours » ou « terminé »."""
+    if missing_setup_step(bot, guild) is not None:
+        return "préparation"
+    if not bot.store.is_started(guild.id):
+        return "prêt"
+    return "en cours" if bot.store.current_pick(guild.id) is not None else "terminé"
 
 
 def next_step_hint(bot: DraftBot, guild: discord.Guild) -> str:
-    for done, name, _ in setup_steps(bot, guild):
-        if not done:
-            return f"\n👉 Prochaine étape : **{name}** (dans `/admin`)."
+    step = missing_setup_step(bot, guild)
+    if step is not None:
+        return f"\n👉 Prochaine étape : **{SETUP_STEPS[step][1]}** (dans `/admin`)."
+    if not bot.store.is_started(guild.id):
+        return f"\n👉 Dernière étape : **▶ {LAUNCH_STEP}** (dans `/admin`)."
     return ""
 
 
-def panel_text(bot: DraftBot, guild: discord.Guild) -> str:
+def delay_text(bot: DraftBot, guild: discord.Guild) -> str:
+    seconds, admin_role_id = bot.store.timer(guild.id)
+    if not seconds:
+        return "aucun"
+    role = guild.get_role(admin_role_id) if admin_role_id else None
+    return f"{fmt.duration_text(seconds)} par choix" + (f", alerte à {role.mention}" if role else "")
+
+
+def missing_roles_warning(bot: DraftBot, guild: discord.Guild) -> list[str]:
+    missing = [t for t in bot.store.order_teams(guild.id) if bot.team_role(guild, t) is None]
+    if not missing:
+        return []
+    return ["⚠️ Aucun rôle Discord pour : " + ", ".join(escape_markdown(t) for t in missing)
+            + ". Ces équipes ne pourront pas choisir elles-mêmes."]
+
+
+def panel_text(bot: DraftBot, guild: discord.Guild, more: bool = False) -> str:
     store = bot.store
-    lines = ["🛠️ **Panneau admin du draft**", "", "**Préparer le draft** (dans l'ordre, un bouton par étape)"]
-    steps = setup_steps(bot, guild)
-    lines += [f"{'✅' if done else '❌'} **{name}** : {detail}" for done, name, detail in steps]
-    seconds, admin_role_id = store.timer(guild.id)
-    if seconds:
-        role = guild.get_role(admin_role_id) if admin_role_id else None
-        detail = f"{fmt.duration_text(seconds)} par choix" + (f", alerte à {role.mention}" if role else "")
-    else:
-        detail = "aucun délai"
-    lines.append(f"➖ **4. Délai** (facultatif) : {detail}")
-    lines.append("")
-    todo = next((name for done, name, _ in steps if not done), None)
-    if todo:
-        lines.append(f"👉 Prochaine étape : clique sur **{todo}**.")
-    elif store.current_pick(guild.id) is None:
-        lines.append("🏁 Le draft est terminé. Le **Journal** contient tous les choix.")
-    else:
-        lines.append("🏒 Tout est prêt, le draft est en cours.")
-        lines.append(bot.on_the_clock(guild))
-    return "\n".join(lines)
+    if more:
+        channels = bot.channels(guild)
+        players = store.player_count(guild.id)
+        picks = store.pick_count(guild.id)
+        return "\n".join([
+            f"⚙️ **{MORE_OPTIONS}**",
+            "• Salons : " + (f"liste dans {channels[0].mention}, annonces dans {channels[1].mention}"
+                             if channels else "pas encore choisis"),
+            "• Joueurs : " + (f"{players}, dont {len(store.available_players(guild.id))} encore disponibles"
+                              if players else "aucun"),
+            "• Ordre : " + (f"{picks} choix, {store.made_picks_count(guild.id)} déjà faits"
+                            if picks else "pas encore défini"),
+            f"• Délai : {delay_text(bot, guild)}",
+            "",
+            "Clique sur ce que tu veux faire, ou sur **Retour**.",
+        ])
+    phase = panel_phase(bot, guild)
+    if phase == "préparation":
+        step = missing_setup_step(bot, guild)
+        _, name, explanation = SETUP_STEPS[step]
+        return "\n".join([
+            f"🛠️ **Préparer le draft : étape {step + 1} sur {len(SETUP_STEPS) + 1}**",
+            "",
+            f"👉 **{name}**",
+            explanation,
+            "",
+            "Clique sur le bouton bleu ci-dessous.",
+        ])
+    picks = store.pick_count(guild.id)
+    if phase == "prêt":
+        channels = bot.channels(guild)
+        return "\n".join([
+            f"✅ **Tout est prêt!** Dernière étape : {len(SETUP_STEPS) + 1} sur {len(SETUP_STEPS) + 1}.",
+            "",
+            f"• {picks} choix, {len(store.order_teams(guild.id))} équipes, "
+            f"{len(store.available_players(guild.id))} joueurs",
+            f"• Délai : {delay_text(bot, guild)}",
+            *missing_roles_warning(bot, guild),
+            "",
+            f"Clique sur **▶ {LAUNCH_STEP}** quand tu veux commencer. "
+            f"La première équipe sera avertie dans {channels[1].mention}.",
+        ])
+    if phase == "en cours":
+        return "\n".join([
+            f"🏒 **Le draft est en cours** ({store.made_picks_count(guild.id)} choix faits sur {picks})",
+            bot.on_the_clock(guild),
+            *missing_roles_warning(bot, guild),
+        ])
+    return "\n".join([
+        f"🏁 **Le draft est terminé** ({picks} choix).",
+        f"Le journal de toutes les actions est dans **{MORE_OPTIONS}**.",
+    ])
+
+
+class PanelButton(discord.ui.Button):
+    def __init__(self, key: str, label: str, action: Callable[[discord.Interaction], Awaitable[None]],
+                 style: discord.ButtonStyle, emoji: str | None = None, row: int | None = None):
+        super().__init__(label=label, emoji=emoji, style=style, row=row, custom_id=f"admin:{key}")
+        self.key, self.action = key, action
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self.action(interaction)
 
 
 class AdminPanel(discord.ui.View):
+    """Le panneau ne montre que ce qui sert maintenant :
+    - préparation : un seul bouton, celui de la prochaine étape ;
+    - prêt : « Lancer le draft » ;
+    - en cours : choisir pour l'équipe au tour, annuler le dernier choix ;
+    - toujours : « Plus d'options », qui range tout le reste (rien n'est perdu).
+    """
+
     def __init__(self, bot: DraftBot, user_id: int, guild_id: int):
         super().__init__(timeout=PANEL_SECONDS)
         self.bot, self.user_id, self.guild_id = bot, user_id, guild_id
         self.origin: discord.Interaction | None = None
+        self.more = False
+
+    def button(self, key: str) -> PanelButton | None:
+        """Le bouton affiché avec cette clé, ou None s'il n'est pas affiché maintenant."""
+        return next((item for item in self.children if isinstance(item, PanelButton) and item.key == key), None)
+
+    def add(self, key: str, label: str, action, style=discord.ButtonStyle.secondary,
+            emoji: str | None = None, row: int | None = None) -> None:
+        self.add_item(PanelButton(key, label, action, style, emoji, row))
+
+    def build(self, guild: discord.Guild) -> str:
+        """Remet les bons boutons pour l'état du draft et retourne le texte du panneau."""
+        self.clear_items()
+        primary, success, danger = discord.ButtonStyle.primary, discord.ButtonStyle.success, discord.ButtonStyle.danger
+        if self.more:
+            self.add("salons", CHANGE_CHANNELS, self.open_channels, emoji="📺", row=0)
+            self.add("joueurs", "Changer les joueurs", self.open_players, emoji="📋", row=0)
+            self.add("ordre", "Changer l'ordre", self.open_order, emoji="🔢", row=0)
+            self.add("delai", "Délai par choix", self.open_delay, emoji="⌛", row=1)
+            self.add("echange", "Échanger un choix", self.open_trade, emoji="🔁", row=1)
+            self.add("journal", "Journal", self.journal, emoji="📒", row=1)
+            self.add("retour", "Retour", self.back, style=primary, emoji="⬅️", row=2)
+            return panel_text(self.bot, guild, more=True)
+        phase = panel_phase(self.bot, guild)
+        if phase == "préparation":
+            key, name, _ = SETUP_STEPS[missing_setup_step(self.bot, guild)]
+            action = {"salons": self.open_channels, "joueurs": self.open_players, "ordre": self.open_order}[key]
+            self.add(key, name, action, style=primary, emoji="➡️", row=0)
+        elif phase == "prêt":
+            self.add("lancer", LAUNCH_STEP, self.launch, style=success, emoji="▶️", row=0)
+        elif phase == "en cours":
+            self.add("choisir", "Choisir pour l'équipe au tour", self.force_pick, style=success, emoji="🏒", row=0)
+            self.add("annuler", "Annuler le dernier choix", self.undo, style=danger, emoji="↩️", row=0)
+        else:
+            # Une erreur au dernier choix doit pouvoir être corrigée, même après la fin.
+            self.add("annuler", "Annuler le dernier choix", self.undo, style=danger, emoji="↩️", row=0)
+        self.add("options", MORE_OPTIONS, self.show_more, emoji="⚙️", row=1)
+        return panel_text(self.bot, guild)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -997,7 +1165,7 @@ class AdminPanel(discord.ui.View):
         if self.origin is None:
             return
         try:
-            await self.origin.edit_original_response(content=panel_text(self.bot, guild), view=self)
+            await self.origin.edit_original_response(content=self.build(guild), view=self)
         except discord.HTTPException:
             self.bot.forget_panel(self.guild_id, self)
 
@@ -1013,44 +1181,43 @@ class AdminPanel(discord.ui.View):
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
         await report_error(interaction, error)
 
-    @discord.ui.button(label="1. Salons", style=discord.ButtonStyle.primary, row=0)
-    async def channels(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def show_more(self, interaction: discord.Interaction) -> None:
+        self.more = True
+        await interaction.response.edit_message(content=self.build(interaction.guild), view=self)
+
+    async def back(self, interaction: discord.Interaction) -> None:
+        self.more = False
+        await interaction.response.edit_message(content=self.build(interaction.guild), view=self)
+
+    async def open_channels(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(ChannelsModal(self.bot, self.bot.store.get_channels(interaction.guild_id)))
 
-    @discord.ui.button(label="2. Joueurs", style=discord.ButtonStyle.primary, row=0)
-    async def players(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def open_players(self, interaction: discord.Interaction) -> None:
         if not self.bot.channels(interaction.guild):
-            await reply(interaction, "Fais d'abord l'étape **1. Salons**.")
+            await reply(interaction, f"Choisis d'abord les salons : **{MORE_OPTIONS}**, puis **{CHANGE_CHANNELS}**.")
             return
         await interaction.response.send_modal(PlayersModal(self.bot))
 
-    @discord.ui.button(label="3. Ordre", style=discord.ButtonStyle.primary, row=0)
-    async def order(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def open_order(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(OrderModal(self.bot))
 
-    @discord.ui.button(label="4. Délai", style=discord.ButtonStyle.primary, row=0)
-    async def delay(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def open_delay(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(DelayModal(self.bot, *self.bot.store.timer(interaction.guild_id)))
 
-    @discord.ui.button(label="Choisir pour l'équipe au tour", emoji="🏒", style=discord.ButtonStyle.success, row=1)
-    async def force_pick(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await open_pick(self.bot, interaction, forced=True)
-
-    @discord.ui.button(label="Annuler le dernier choix", emoji="↩️", style=discord.ButtonStyle.danger, row=1)
-    async def undo(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await undo_last_pick(self.bot, interaction)
-
-    @discord.ui.button(label="Échanger un choix", emoji="🔁", style=discord.ButtonStyle.secondary, row=1)
-    async def trade(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def open_trade(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(TradeModal(self.bot))
 
-    @discord.ui.button(label="Journal", emoji="📒", style=discord.ButtonStyle.secondary, row=2)
-    async def journal(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def journal(self, interaction: discord.Interaction) -> None:
         await send_journal(self.bot, interaction)
 
-    @discord.ui.button(label="Actualiser", emoji="🔄", style=discord.ButtonStyle.secondary, row=2)
-    async def reload(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.edit_message(content=panel_text(self.bot, interaction.guild), view=self)
+    async def launch(self, interaction: discord.Interaction) -> None:
+        await launch_draft(self.bot, interaction)
+
+    async def force_pick(self, interaction: discord.Interaction) -> None:
+        await open_pick(self.bot, interaction, forced=True)
+
+    async def undo(self, interaction: discord.Interaction) -> None:
+        await undo_last_pick(self.bot, interaction)
 
 
 HELP_TEXT = """\
@@ -1064,9 +1231,10 @@ Tu préfères taper ? `/draft` suivi du nom du joueur fonctionne aussi."""
 
 ADMIN_HELP = """
 
-🛠️ **Admins** : `/admin` ouvre le panneau du draft. Suis les étapes 1, 2, 3 (et 4 si tu veux un délai). \
-Pendant le draft, le panneau permet de choisir pour une équipe, d'annuler le dernier choix, d'échanger un choix \
-et de télécharger le journal."""
+🛠️ **Admins** : `/admin` ouvre le panneau du draft. Il montre un seul bouton à la fois : \
+clique dessus pour passer à l'étape suivante, jusqu'à **▶ Lancer le draft**. Pendant le draft : \
+**Choisir pour l'équipe au tour** et **Annuler le dernier choix**. Tout le reste (échanger un choix, délai, \
+journal, changer les salons, les joueurs ou l'ordre) est dans **Plus d'options**."""
 
 
 def register_commands(bot: DraftBot) -> None:
@@ -1085,7 +1253,7 @@ def register_commands(bot: DraftBot) -> None:
     @admin_only
     async def admin(interaction: discord.Interaction) -> None:
         panel = AdminPanel(bot, interaction.user.id, interaction.guild_id)
-        await reply(interaction, panel_text(bot, interaction.guild), view=panel)
+        await reply(interaction, panel.build(interaction.guild), view=panel)
         panel.origin = interaction
         bot.register_panel(interaction.guild_id, panel)
 
@@ -1124,6 +1292,9 @@ def register_commands(bot: DraftBot) -> None:
     @app_commands.guild_only()
     async def statut(interaction: discord.Interaction) -> None:
         guild_id = interaction.guild_id
+        if store.pick_count(guild_id) and not store.is_started(guild_id):
+            await reply(interaction, "Le draft n'est pas encore commencé. Les équipes seront averties au début.")
+            return
         upcoming = store.upcoming_picks(guild_id, 6)
         if not upcoming:
             await reply(interaction, "Aucun choix en attente.")

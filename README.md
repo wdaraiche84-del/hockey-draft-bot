@@ -30,16 +30,18 @@ Les réponses du bot sont privées : les salons restent propres. Après un choix
 
 ### Le panneau `/admin`
 
-Le panneau montre l'état du draft avec des ✅ et des ❌, et la prochaine étape à faire. Il se met à jour tout seul après chaque changement.
+Le panneau ne montre qu'un seul bouton à la fois : la prochaine chose à faire. Il se met à jour tout seul après chaque changement.
 
-**Préparer le draft** (dans l'ordre) :
+**Préparer le draft** (un bouton bleu par étape, dans l'ordre) :
 
-1. **Salons** : choisir dans deux menus le salon de la liste et le salon des annonces.
-2. **Joueurs** : envoyer le fichier des joueurs (voir plus bas).
-3. **Ordre** : écrire les équipes de la 1re ronde, le nombre de rondes, et si l'ordre s'inverse à chaque ronde (serpentin).
-4. **Délai** (facultatif) : le temps pour chaque choix (`8h`, `90m`, `1h30`, `0` pour aucun) et le rôle à avertir.
+1. **Choisir les salons** : choisir dans deux menus le salon de la liste et le salon des annonces.
+2. **Importer les joueurs** : envoyer le fichier des joueurs (voir plus bas).
+3. **Définir l'ordre du draft** : écrire les équipes de la 1re ronde, le nombre de rondes, et si l'ordre s'inverse à chaque ronde (serpentin).
+4. **▶ Lancer le draft** : le draft commence et la première équipe est avertie. Personne ne peut choisir avant.
 
-**Pendant le draft** : **Choisir pour l'équipe au tour**, **Annuler le dernier choix**, **Échanger un choix** (numéro du choix + rôle de la nouvelle équipe), **Journal** (fichier Excel/CSV de toutes les actions) et **Actualiser**.
+**Pendant le draft** : **Choisir pour l'équipe au tour** et **Annuler le dernier choix**.
+
+**Plus d'options** (toujours là) : changer les salons, les joueurs ou l'ordre, **Délai par choix** (`8h`, `90m`, `1h30`, `0` pour aucun, et le rôle à avertir), **Échanger un choix** (numéro du choix + rôle de la nouvelle équipe) et **Journal** (fichier Excel/CSV de toutes les actions). Changer l'ordre pendant un draft le remet à zéro : il faut le relancer.
 
 Le panneau se ferme après 14 minutes (limite de Discord) : refaire `/admin` pour le rouvrir.
 
@@ -55,7 +57,7 @@ Mario Lemieux;Laval;C
 
 ### Ordre avec des choix échangés
 
-Dans **3. Ordre**, écrire tous les choix du draft dans l'ordre, une équipe par ligne, et mettre **1** ronde. Les choix échangés sont simplement écrits au nom de leur nouveau propriétaire.
+Dans **Définir l'ordre du draft** (ou **Plus d'options**, **Changer l'ordre**), écrire tous les choix du draft dans l'ordre, une équipe par ligne, et mettre **1** ronde. Les choix échangés sont simplement écrits au nom de leur nouveau propriétaire.
 
 ```
 Laval
