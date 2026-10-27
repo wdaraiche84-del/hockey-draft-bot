@@ -44,15 +44,17 @@ PICK_BUTTON_ID = "draft:faire-mon-choix"
 
 
 class DraftBot(discord.Client):
-    def __init__(self, store: Store, guild_ids: list[int], backup_dir: Path):
+    def __init__(self, store: Store, backup_dir: Path):
         super().__init__(intents=discord.Intents.default())
         self.store = store
-        self.guild_ids = guild_ids
         self.backup_dir = backup_dir
         self.tree = app_commands.CommandTree(self)
         # Un verrou par serveur : deux commandes ne modifient jamais le même draft en même temps.
         self.locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.stale_cleared = False
+        # Les serveurs où les commandes sont déjà publiées depuis le démarrage.
+        self.synced_guilds: set[int] = set()
+        # Une publication à la fois : un serveur qui arrive pendant le démarrage attend son tour.
+        self.sync_lock = asyncio.Lock()
         # Les panneaux /admin ouverts, par serveur, pour les mettre à jour après chaque changement.
         self.panels: defaultdict[int, set[AdminPanel]] = defaultdict(set)
         register_commands(self)
@@ -60,60 +62,65 @@ class DraftBot(discord.Client):
     async def setup_hook(self) -> None:
         # Les boutons « Faire mon choix » déjà publiés répondent dès le démarrage.
         self.add_view(PickButtonView(self))
-        await self.sync_commands()
+        await self.clear_global_commands()
         self.backup("demarrage")
         self.check_timers.start()
         self.hourly_backup.start()
 
-    async def sync_commands(self) -> None:
-        """Publie les commandes d'une seule façon à la fois, pour éviter les doublons.
+    async def clear_global_commands(self) -> None:
+        """Vide la liste globale chez Discord, pour éviter les doublons.
 
-        Avec GUILD_IDS, les commandes sont publiées sur chaque serveur (visibles tout de suite)
-        et la liste globale est vidée : sinon, les commandes globales d'une ancienne version
-        s'affichent en double à côté des nouvelles.
+        Les commandes sont publiées serveur par serveur (visibles tout de suite). Une ancienne
+        version les publiait aussi en global : elles s'afficheraient en double. Le bot garde
+        quand même ses commandes en mémoire, pour répondre partout.
         """
-        if not self.guild_ids:
-            await self.tree.sync()
-            return
-        for guild_id in self.guild_ids:
-            self.tree.copy_global_to(guild=discord.Object(id=guild_id))
+        commands = self.tree.get_commands()
         self.tree.clear_commands(guild=None)
-        await self.tree.sync()
-        for guild_id in self.guild_ids:
-            try:
-                await self.tree.sync(guild=discord.Object(id=guild_id))
-            except discord.Forbidden:
-                log.warning("Le bot n'est pas encore sur le serveur %s : commandes non publiées.", guild_id)
+        try:
+            await self.tree.sync()
+        except discord.HTTPException:
+            log.warning("Impossible de vider les anciennes commandes globales : des doublons peuvent apparaître.")
+        finally:
+            for command in commands:
+                self.tree.add_command(command)
 
-    async def clear_stale_guild_commands(self) -> None:
-        """Sans GUILD_IDS, les commandes sont globales : on retire celles qu'une ancienne
-        version aurait publiées serveur par serveur."""
-        if self.guild_ids or self.stale_cleared:
-            return
-        self.stale_cleared = True
-        for guild in self.guilds:
+    async def sync_guild(self, guild: discord.abc.Snowflake) -> bool:
+        """Publie les commandes sur un serveur. Rend False si Discord refuse."""
+        async with self.sync_lock:
+            self.tree.clear_commands(guild=guild)
+            self.tree.copy_global_to(guild=guild)
             try:
-                self.tree.clear_commands(guild=guild)
                 await self.tree.sync(guild=guild)
+            except discord.Forbidden:
+                log.warning("Commandes refusées sur le serveur %s : réinvite le bot avec la portée "
+                            "« applications.commands ».", guild.id)
+                return False
             except discord.HTTPException:
-                log.warning("Impossible de nettoyer les commandes du serveur %s.", guild.id)
+                log.warning("Impossible de publier les commandes sur le serveur %s : nouvel essai au "
+                            "prochain démarrage.", guild.id)
+                return False
+            self.synced_guilds.add(guild.id)
+            return True
+
+    async def sync_all_guilds(self) -> None:
+        for guild in list(self.guilds):
+            if guild.id not in self.synced_guilds:
+                await self.sync_guild(guild)
 
     async def on_ready(self) -> None:
         log.info("Connecté en tant que %s sur %d serveur(s)", self.user, len(self.guilds))
-        await self.clear_stale_guild_commands()
-        if not self.guild_ids:
-            log.warning("GUILD_IDS est vide : le bot accepte n'importe quel serveur.")
-        for guild in list(self.guilds):
-            await self.leave_if_not_allowed(guild)
+        await self.sync_all_guilds()
+        log.info("Commandes publiées sur %d serveur(s).", len(self.synced_guilds))
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
-        await self.leave_if_not_allowed(guild)
+        log.info("Nouveau serveur : %s (%s)", guild.name, guild.id)
+        await self.sync_guild(guild)
 
-    async def leave_if_not_allowed(self, guild: discord.Guild) -> None:
-        """Quitte tout serveur absent de GUILD_IDS. Sans liste, tous les serveurs sont acceptés."""
-        if self.guild_ids and guild.id not in self.guild_ids:
-            log.warning("Serveur non autorisé, le bot le quitte : %s (%s)", guild.name, guild.id)
-            await guild.leave()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        # Le draft du serveur reste dans la base : s'il réinvite le bot, tout est encore là.
+        log.info("Le bot a été retiré du serveur %s (%s)", guild.name, guild.id)
+        self.synced_guilds.discard(guild.id)
+        self.tree.clear_commands(guild=guild)
 
     def channels(self, guild: discord.Guild) -> tuple[discord.TextChannel, discord.TextChannel] | None:
         ids = self.store.get_channels(guild.id)
@@ -1173,12 +1180,10 @@ def resolve_paths(env: dict) -> tuple[Path, Path]:
     return db_path, backup_dir
 
 
-def parse_guild_ids(env: dict) -> list[int]:
-    raw = (env.get("GUILD_IDS") or env.get("GUILD_ID") or "").replace(" ", "")
-    try:
-        return [int(x) for x in raw.split(",") if x]
-    except ValueError:
-        raise ConfigError(f"GUILD_IDS doit contenir des identifiants de serveur séparés par des virgules, pas « {raw} ».")
+def warn_old_guild_ids(env: dict) -> None:
+    """GUILD_IDS ne sert plus : le bot marche sur tout serveur où il est invité."""
+    if (env.get("GUILD_IDS") or env.get("GUILD_ID") or "").strip():
+        log.info("GUILD_IDS n'est plus nécessaire : le bot marche sur tous les serveurs où il est invité.")
 
 
 def open_store(db_path: Path, wait_seconds: int = 60) -> Store:
@@ -1210,14 +1215,14 @@ def main() -> None:
         token = os.environ.get("DISCORD_TOKEN", "").strip()
         if not token:
             raise ConfigError("DISCORD_TOKEN est vide : colle le jeton du bot dans .env (ou dans les variables Railway).")
-        guild_ids = parse_guild_ids(os.environ)
+        warn_old_guild_ids(os.environ)
         db_path, backup_dir = resolve_paths(os.environ)
         log.info("Base du draft : %s · sauvegardes : %s", db_path.resolve(), backup_dir)
         store = open_store(db_path)
     except ConfigError as error:
         log.error("%s", error)
         raise SystemExit(1)
-    DraftBot(store, guild_ids, backup_dir).run(token)
+    DraftBot(store, backup_dir).run(token)
 
 
 if __name__ == "__main__":

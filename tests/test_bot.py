@@ -185,7 +185,7 @@ def no_waiting(monkeypatch):
 @pytest.fixture
 def league():
     store = Store(":memory:")
-    bot = DraftBot(store, [], backup_dir=None)
+    bot = DraftBot(store, backup_dir=None)
     bot.backup = lambda reason: None
     laval, granby = FakeRole("Laval"), FakeRole("Granby")
     liste, selections = FakeChannel("draft-liste"), FakeChannel("draft-selections")
@@ -202,7 +202,7 @@ def league():
 def empty_league():
     """Un serveur où rien n'est encore préparé, avec un admin."""
     store = Store(":memory:")
-    bot = DraftBot(store, [], backup_dir=None)
+    bot = DraftBot(store, backup_dir=None)
     bot.backup = lambda reason: None
     laval, granby, admins = FakeRole("Laval"), FakeRole("Granby"), FakeRole("Admins")
     liste, selections = FakeChannel("draft-liste"), FakeChannel("draft-selections")
@@ -380,7 +380,7 @@ def test_menu_choice_after_turn_changed_is_refused(league):
 
 def test_button_is_permanent():
     async def scenario():
-        view = PickButtonView(DraftBot(Store(":memory:"), [], backup_dir=None))
+        view = PickButtonView(DraftBot(Store(":memory:"), backup_dir=None))
         assert view.timeout is None and view.is_persistent()
         assert view.pick.custom_id == bot_module.PICK_BUTTON_ID
     run(scenario())
@@ -516,12 +516,12 @@ def test_time_up_alert_pings_admin_role_once_and_points_to_the_panel(league):
 # Les commandes
 
 def test_only_five_simple_commands():
-    bot = DraftBot(Store(":memory:"), [], backup_dir=None)
+    bot = DraftBot(Store(":memory:"), backup_dir=None)
     assert sorted(c.name for c in bot.tree.get_commands()) == ["admin", "aide", "draft", "roue", "statut"]
 
 
 def test_only_admin_command_is_restricted_and_rechecked():
-    bot = DraftBot(Store(":memory:"), [], backup_dir=None)
+    bot = DraftBot(Store(":memory:"), backup_dir=None)
     for command in bot.tree.get_commands():
         if command.name == "admin":
             assert command.default_permissions.manage_guild
@@ -726,7 +726,7 @@ def test_bad_or_zero_delay(league):
 
 def test_delay_window_shows_the_current_delay():
     async def scenario():
-        modal = DelayModal(DraftBot(Store(":memory:"), [], backup_dir=None), 5400, None)
+        modal = DelayModal(DraftBot(Store(":memory:"), backup_dir=None), 5400, None)
         assert modal.delay.default == "1h30" and fmt.parse_duration(modal.delay.default) == 5400
     run(scenario())
 
@@ -838,7 +838,7 @@ def test_closed_panel_stops_being_refreshed(league):
 
 def test_windows_respect_discord_limits():
     async def scenario():
-        bot = DraftBot(Store(":memory:"), [], backup_dir=None)
+        bot = DraftBot(Store(":memory:"), backup_dir=None)
         for modal in (SearchModal(bot, False), SearchModal(bot, True), ChannelsModal(bot, (1, 2)),
                       ChannelsModal(bot, None), PlayersModal(bot), OrderModal(bot), DelayModal(bot, 3600, 5),
                       DelayModal(bot, 0, None), TradeModal(bot)):
@@ -855,24 +855,6 @@ def test_windows_respect_discord_limits():
 
 
 # Démarrage et configuration
-
-def test_unlisted_server_is_left():
-    bot = DraftBot(Store(":memory:"), [111], backup_dir=None)
-    left = []
-
-    class Guild:
-        def __init__(self, guild_id):
-            self.id, self.name = guild_id, "x"
-
-        async def leave(self):
-            left.append(self.id)
-
-    async def scenario():
-        await bot.on_guild_join(Guild(111))
-        await bot.on_guild_join(Guild(222))
-    asyncio.run(scenario())
-    assert left == [222]
-
 
 def test_paths_on_pc_stay_next_to_the_bot():
     from pathlib import Path
@@ -895,13 +877,13 @@ def test_railway_without_volume_refuses_to_start():
         resolve_paths({"RAILWAY_ENVIRONMENT": "production"})
 
 
-def test_guild_ids_parsing():
-    from draft_bot.bot import ConfigError, parse_guild_ids
-    assert parse_guild_ids({"GUILD_IDS": "111, 222"}) == [111, 222]
-    assert parse_guild_ids({"GUILD_ID": "333"}) == [333]
-    assert parse_guild_ids({}) == []
-    with pytest.raises(ConfigError):
-        parse_guild_ids({"GUILD_IDS": "mon serveur"})
+def test_old_guild_ids_setting_is_harmless(caplog):
+    from draft_bot.bot import warn_old_guild_ids
+    with caplog.at_level("INFO", logger="draft_bot"):
+        warn_old_guild_ids({})
+        assert not caplog.records
+        warn_old_guild_ids({"GUILD_IDS": "mon serveur"})  # même une valeur invalide ne bloque plus le démarrage
+    assert "n'est plus nécessaire" in caplog.text
 
 
 def test_second_copy_of_the_bot_cannot_open_the_same_database(tmp_path):
@@ -918,51 +900,143 @@ def test_second_copy_of_the_bot_cannot_open_the_same_database(tmp_path):
 class SyncRecorder:
     """Remplace tree.sync : note ce qui serait publié, global (None) ou par serveur."""
 
-    def __init__(self, tree):
+    def __init__(self, tree, refuse=()):
         self.tree = tree
         self.published = {}
+        self.calls = []
+        self.refuse = dict(refuse)
 
     async def __call__(self, guild=None):
         key = guild.id if guild else None
+        self.calls.append(key)
+        if key in self.refuse:
+            raise self.refuse[key](FakeHTTPResponse(), "refusé")
         self.published[key] = sorted(c.name for c in self.tree.get_commands(guild=guild))
 
 
-def test_with_guild_ids_global_commands_are_emptied():
-    bot = DraftBot(Store(":memory:"), [111, 222], backup_dir=None)
-    recorder = SyncRecorder(bot.tree)
+class SyncGuild:
+    def __init__(self, guild_id):
+        self.id, self.name = guild_id, f"serveur {guild_id}"
+
+    async def leave(self):
+        raise AssertionError("le bot ne doit jamais quitter un serveur tout seul")
+
+
+def sync_bot(guilds=(), refuse=()):
+    bot = DraftBot(Store(":memory:"), backup_dir=None)
+    recorder = SyncRecorder(bot.tree, refuse)
     bot.tree.sync = recorder
-    asyncio.run(bot.sync_commands())
-    assert recorder.published[None] == []  # les anciennes commandes globales disparaissent
-    assert "draft" in recorder.published[111] and "draft" in recorder.published[222]
-    assert "draft-dg" not in recorder.published[111]
+    joined = [SyncGuild(g) for g in guilds]
+    bot.__dict__["joined"] = joined
+    return bot, recorder, joined
 
 
-def test_without_guild_ids_old_guild_commands_are_removed():
-    bot = DraftBot(Store(":memory:"), [], backup_dir=None)
-    recorder = SyncRecorder(bot.tree)
-    bot.tree.sync = recorder
-
-    class Guild:
-        id = 333
-    bot._connection._guilds = {}
-    type(bot).guilds = property(lambda self: [Guild()])
-    try:
-        asyncio.run(bot.sync_commands())
-        asyncio.run(bot.clear_stale_guild_commands())
-        asyncio.run(bot.clear_stale_guild_commands())  # une seule fois
-    finally:
-        del type(bot).guilds
-    assert "draft" in recorder.published[None]
-    assert recorder.published[333] == []
+@pytest.fixture
+def fake_guilds(monkeypatch):
+    monkeypatch.setattr(DraftBot, "guilds", property(lambda self: self.__dict__["joined"]))
 
 
-def test_old_admin_commands_disappear_from_each_server():
-    bot = DraftBot(Store(":memory:"), [111], backup_dir=None)
-    recorder = SyncRecorder(bot.tree)
-    bot.tree.sync = recorder
-    asyncio.run(bot.sync_commands())
-    # Discord remplace toute la liste du serveur : /salons, /forcedraft… disparaissent.
-    assert recorder.published[111] == ["admin", "aide", "draft", "roue", "statut"]
+EXPECTED = ["admin", "aide", "draft", "roue", "statut"]
+
+
+def test_global_commands_are_emptied_but_still_answered():
+    bot, recorder, _ = sync_bot()
+    asyncio.run(bot.clear_global_commands())
+    assert recorder.published[None] == []  # les anciennes commandes globales disparaissent chez Discord
+    # Le bot garde ses commandes en mémoire pour répondre dans tous les serveurs.
+    assert sorted(c.name for c in bot.tree.get_commands()) == EXPECTED
+
+
+def test_global_cleanup_failure_does_not_lose_the_commands():
+    bot, recorder, _ = sync_bot(refuse={None: discord.HTTPException})
+    asyncio.run(bot.clear_global_commands())
+    assert sorted(c.name for c in bot.tree.get_commands()) == EXPECTED
+
+
+def test_every_server_gets_the_commands_at_startup(fake_guilds):
+    bot, recorder, _ = sync_bot([111, 222, 333])
+    asyncio.run(bot.on_ready())
+    for guild_id in (111, 222, 333):
+        # Discord remplace toute la liste du serveur : /salons, /forcedraft… disparaissent.
+        assert recorder.published[guild_id] == EXPECTED
+    assert None not in recorder.calls  # rien de global : pas de doublons
+    assert bot.synced_guilds == {111, 222, 333}
+
+
+def test_new_server_is_accepted_and_gets_the_commands(fake_guilds):
+    bot, recorder, joined = sync_bot([111])
+    asyncio.run(bot.on_ready())
+    new = SyncGuild(999)
+    joined.append(new)
+    asyncio.run(bot.on_guild_join(new))  # SyncGuild.leave échouerait si le bot partait
+    assert recorder.published[999] == EXPECTED
+    assert recorder.calls.count(999) == 1
+
+
+def test_reconnect_does_not_republish(fake_guilds):
+    bot, recorder, _ = sync_bot([111, 222])
+    asyncio.run(bot.on_ready())
+    asyncio.run(bot.on_ready())  # Discord renvoie on_ready après une coupure
+    assert recorder.calls == [111, 222]
+
+
+def test_one_refusing_server_does_not_block_the_others(fake_guilds):
+    bot, recorder, _ = sync_bot([111, 222, 333], refuse={222: discord.Forbidden})
+    asyncio.run(bot.on_ready())
+    assert recorder.published[111] == EXPECTED and recorder.published[333] == EXPECTED
+    assert 222 not in recorder.published and bot.synced_guilds == {111, 333}
+    # Au prochain on_ready (reconnexion), le serveur refusé est réessayé.
+    recorder.refuse.clear()
+    asyncio.run(bot.on_ready())
+    assert recorder.published[222] == EXPECTED
+
+
+def test_server_error_does_not_crash_startup(fake_guilds):
+    bot, recorder, _ = sync_bot([111, 222], refuse={111: discord.HTTPException})
+    asyncio.run(bot.on_ready())
+    assert recorder.published[222] == EXPECTED
+
+
+def test_removed_then_reinvited_server_gets_commands_again_and_keeps_its_draft(fake_guilds):
+    bot, recorder, _ = sync_bot([111])
+    bot.store.set_channels(111, 10, 20)
+    asyncio.run(bot.on_ready())
+    asyncio.run(bot.on_guild_remove(SyncGuild(111)))
+    assert bot.tree.get_commands(guild=SyncGuild(111)) == []
+    asyncio.run(bot.on_guild_join(SyncGuild(111)))
+    assert recorder.calls.count(111) == 2 and recorder.published[111] == EXPECTED
+    assert bot.store.get_channels(111) == (10, 20)  # le draft du serveur n'est pas effacé
+
+
+def test_joins_during_startup_are_published_one_at_a_time(fake_guilds):
+    bot, recorder, joined = sync_bot([111, 222])
+    running, overlap = [0], [False]
+
+    async def slow_sync(guild=None):
+        running[0] += 1
+        overlap[0] |= running[0] > 1
+        await asyncio.sleep(0.01)
+        running[0] -= 1
+        await SyncRecorder.__call__(recorder, guild)
+    bot.tree.sync = slow_sync
+
+    async def scenario():
+        new = SyncGuild(333)
+        joined.append(new)
+        await asyncio.gather(bot.on_ready(), bot.on_guild_join(new))
+    asyncio.run(scenario())
+    assert not overlap[0]
+    assert all(recorder.published[g] == EXPECTED for g in (111, 222, 333))
+    assert recorder.calls.count(333) == 1
+
+
+def test_each_server_answers_its_own_commands(fake_guilds):
+    """Une commande reçue d'un serveur est trouvée, qu'il ait déjà sa copie ou pas encore."""
+    bot, recorder, _ = sync_bot([111])
+    asyncio.run(bot.on_ready())
+    for guild_id in ("111", "999"):  # 999 : serveur pas encore publié, la copie de secours répond
+        command, _ = bot.tree._get_app_command_options({"name": "draft", "guild_id": guild_id})
+        assert command.name == "draft"
 
 
 def test_old_discord_library_gives_a_clear_message(monkeypatch):
