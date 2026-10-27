@@ -45,6 +45,24 @@ Le panneau ne montre qu'un seul bouton à la fois : la prochaine chose à faire.
 
 Le panneau se ferme après 14 minutes (limite de Discord) : refaire `/admin` pour le rouvrir.
 
+### Annoncer une transaction
+
+Le bouton **📣 Annoncer une transaction** est toujours dans `/admin`, avant, pendant et après le draft.
+
+1. Faire une capture d'écran du tableau des transactions de SHM (colonnes « Vers » et « Éléments », avec les logos). Une partie du tableau suffit.
+2. Cliquer sur **Annoncer une transaction**, ajouter la capture et choisir le salon des annonces de transactions (le bot s'en souvient).
+3. Le bot montre ce qu'il a lu : qui reçoit quoi, pour chaque transaction. Tout est coché, sauf ce qui a déjà été annoncé. Décocher ce qu'il ne faut pas annoncer.
+4. Une erreur ? **Corriger** : choisir le rôle de l'équipe et corriger les éléments (un par ligne). Le bot retient ce logo pour la prochaine fois.
+5. **Annoncer** : une annonce par transaction, de la plus ancienne à la plus récente, qui mentionne le rôle de chaque équipe :
+
+```
+🔁 Transaction
+➡️ @Flames reçoit : Daniil Tarasov
+➡️ @Oilers reçoit : Choix de 2e ronde 2020 (Blues)
+```
+
+La lecture est **gratuite** et se fait sur l'ordinateur du bot (RapidOCR) : aucune image n'est envoyée ailleurs. Les logos des 30 équipes SHM sont reconnus. Le rôle d'une équipe est trouvé par son nom, son surnom, sa ville ou son code (« Bruins », « Les Bruins de Boston », « Boston », « BOS »). Si deux rôles conviennent, ou aucun, l'aperçu le signale et l'admin choisit avec **Corriger**. Rien n'est publié avant le clic sur **Annoncer**.
+
 ### Fichier des joueurs
 
 Un fichier CSV ou texte, une ligne par joueur : nom, équipe actuelle, position. La virgule, le point-virgule et la tabulation fonctionnent, et une ligne d'en-tête est ignorée.
@@ -83,7 +101,7 @@ Réimporter la liste ou redéfinir l'ordre remet le draft à zéro. Le bot le di
 2. Inviter le bot avec les portées `bot` et `applications.commands`, et les permissions *Voir les salons*, *Envoyer des messages*, *Lire l'historique des messages*, *Gérer les messages* et *Mentionner @everyone, @here et tous les rôles* (pour mentionner les rôles d'équipe).
 3. Dans le salon de la liste, retirer *Envoyer des messages* aux membres mais leur laisser *Utiliser les commandes de l'application*.
 4. Créer un rôle par équipe, au nom exact de l'équipe, et le donner à son DG.
-5. Installer et lancer (Python 3.10 ou plus) :
+5. Installer et lancer (Python 3.11 ou plus pour lire les captures de transactions ; 3.10 suffit pour le reste) :
 
 ```
 pip install -r requirements.txt
@@ -95,7 +113,7 @@ python -m draft_bot
 
 ### Mettre à jour le bot
 
-Après avoir remplacé le dossier `draft_bot` et le fichier `requirements.txt` par la nouvelle version, mettre à jour les bibliothèques une fois (le panneau admin demande discord.py 2.7 ou plus), puis relancer :
+Après avoir remplacé le dossier `draft_bot` et le fichier `requirements.txt` par la nouvelle version, mettre à jour les bibliothèques une fois (le panneau admin demande discord.py 2.7 ou plus, et la lecture des captures télécharge environ 100 Mo la première fois), puis relancer :
 
 ```
 pip install -U -r requirements.txt
@@ -120,6 +138,8 @@ Le dépôt est prêt pour Railway : `railway.json` donne la commande de démarra
 Sans volume, le bot refuse de démarrer sur Railway, pour ne jamais perdre un draft au redéploiement. Une deuxième copie du bot ne peut pas ouvrir la même base : pendant un redéploiement, la nouvelle copie attend que l'ancienne s'arrête.
 
 Chaque merge sur `main` redéploie le bot automatiquement.
+
+La lecture d'une capture se fait dans un processus à part : elle utilise environ 400 Mo de mémoire pendant quelques secondes, puis les rend. Une seule capture est lue à la fois.
 
 ## Tests
 
