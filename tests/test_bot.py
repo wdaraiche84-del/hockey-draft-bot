@@ -1958,6 +1958,53 @@ def test_changing_league_forgets_the_old_waivers(shm_league):
     assert store.shm_waivers(guild.id) == []
 
 
+# Les rachats SHM, lus sur l'accueil de la ligue
+
+def test_buyouts_already_on_shm_are_quiet_then_new_ones_are_announced(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    nyi = FakeEmoji("NYI")
+    guild.emojis = [nyi]
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        quiet = list(channel.texts())
+        site.add_home("MTL", "gavel", "Josh Anderson a été racheté au salaire de 2 750 000$")
+        # Le logo du club-école de NYI : l'équipe LNH a été apprise plus tôt sur l'accueil.
+        site.add_home("BRG", "gavel", "Pierre Engvall a été racheté au salaire de 1 000 000$")
+        site.add_home("SPR", "gavel", "Jake Neighbours a été racheté au salaire de 900 000$")
+        await bot.check_shm()
+        await bot.check_shm()
+        return quiet
+    quiet = run(scenario())
+    assert quiet == []
+    assert channel.texts() == [
+        f"💸 **Rachat** : {roles['Canadiens'].mention} rachète le contrat de **Josh Anderson** "
+        "(salaire du rachat : 2 750 000 $).",
+        f"💸 **Rachat** : {nyi} {roles['Islanders'].mention} rachète le contrat de **Pierre Engvall** "
+        "(salaire du rachat : 1 000 000 $).",
+        # Un club-école inconnu : nommé tel quel, sans deviner l'équipe.
+        "💸 **Rachat** : Le club-école **SPR** rachète le contrat de **Jake Neighbours** "
+        "(salaire du rachat : 900 000 $).",
+    ]
+    assert all(m == bot_module.NO_PINGS for m in channel.mentions())
+    assert [a for _, _, a, _ in store.log_entries(guild.id)].count("rachat SHM") == 3
+
+
+def test_buyout_still_on_the_home_page_after_a_restart_is_not_repeated(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.add_home("MTL", "gavel", "Josh Anderson a été racheté au salaire de 2 750 000$")
+        await bot.check_shm()
+        restarted = DraftBot(store, backup_dir=None, shm_client=site)
+        restarted.get_guild = bot.get_guild
+        await restarted.check_shm()
+    run(scenario())
+    assert len(channel.texts()) == 1
+
+
 def test_draft_pick_announcement_shows_the_team_emote(league):
     bot, store, guild, gm_laval, gm_granby, selections = league
     penguins = FakeRole("Penguins")

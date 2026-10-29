@@ -73,6 +73,8 @@ CONFIG_COLUMNS = {
     "shm_primed": "INTEGER NOT NULL DEFAULT 0",
     # Les joueurs au ballottage lors de la dernière lecture SHM (JSON), ou NULL avant la première.
     "shm_waivers": "TEXT",
+    # 1 quand les rachats déjà sur l'accueil SHM ont été retenus sans être annoncés.
+    "shm_buyouts_primed": "INTEGER NOT NULL DEFAULT 0",
 }
 
 # Logos appris par serveur (corrections des admins) : assez pour toutes les équipes et leurs variantes.
@@ -471,7 +473,8 @@ class Store:
                 "INSERT INTO config (guild_id, shm_league, shm_primed) VALUES (?, ?, 0) "
                 "ON CONFLICT (guild_id) DO UPDATE SET shm_primed = CASE WHEN shm_league IS excluded.shm_league "
                 "THEN shm_primed ELSE 0 END, shm_waivers = CASE WHEN shm_league IS excluded.shm_league "
-                "THEN shm_waivers ELSE NULL END, shm_league = excluded.shm_league",
+                "THEN shm_waivers ELSE NULL END, shm_buyouts_primed = CASE WHEN shm_league IS excluded.shm_league "
+                "THEN shm_buyouts_primed ELSE 0 END, shm_league = excluded.shm_league",
                 (guild_id, slug),
             )
 
@@ -503,6 +506,14 @@ class Store:
         with self.db:
             self.db.execute("UPDATE config SET shm_waivers = ? WHERE guild_id = ?",
                             (json.dumps(waivers, ensure_ascii=False), guild_id))
+
+    def shm_buyouts_primed(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT shm_buyouts_primed FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0])
+
+    def set_shm_buyouts_primed(self, guild_id: int) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_buyouts_primed = 1 WHERE guild_id = ?", (guild_id,))
 
     def learned_logos(self, guild_id: int) -> list[tuple[int, bytes]]:
         """Les logos qu'un admin a associés à un rôle, du plus récent au plus ancien."""

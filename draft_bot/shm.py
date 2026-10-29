@@ -348,6 +348,54 @@ def feed_claims(rows: list[FeedRow]) -> dict[str, str]:
     return found
 
 
+BOUGHT_OUT = re.compile(r"^(.+?) a été racheté au salaire de ([\d\s\u00a0\u202f.,]+?)\s*\$", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class Buyout:
+    player: str
+    salary: str
+    # Le code de l'équipe LNH, ou celui de son club-école si l'accueil ne dit pas à qui il appartient.
+    team: str
+    text: str
+
+
+def player_of(text: str) -> str:
+    """Le joueur d'une ligne de l'accueil : « David Rittich a été descendu en AHL » donne « david rittich »."""
+    match = re.match(r"^(.+?) (?:a été|est) ", text)
+    return normalize(match.group(1)) if match else ""
+
+
+def feed_buyouts(rows: list[FeedRow], farms: dict[str, str]) -> list[Buyout]:
+    """Les rachats de l'accueil, le plus récent en premier.
+
+    SHM montre parfois le logo du club-école (« BRG ») au lieu de l'équipe LNH. Une autre ligne
+    sur le même joueur avec un logo LNH (« David Rittich a été descendu en AHL », NYI) donne
+    l'équipe, et ce club-école est retenu dans `farms` pour la suite.
+    """
+    found = []
+    for row in rows:
+        match = BOUGHT_OUT.match(row.text)
+        if not match:
+            continue
+        player, team = match.group(1).strip(), row.team
+        if known_team(team, None) is None:
+            name = normalize(player)
+            parent = next((other.team for other in rows if other.team != team and player_of(other.text) == name
+                           and known_team(other.team, None)), None)
+            if parent:
+                farms[team] = parent
+            team = farms.get(team, team)
+        salary = " ".join(match.group(2).replace("\u00a0", " ").replace("\u202f", " ").split())
+        found.append(Buyout(player, salary, team, row.text))
+    return found
+
+
+def buyout_key(buyout: Buyout) -> str:
+    """L'empreinte d'un rachat : le même joueur racheté au même salaire n'est annoncé qu'une fois."""
+    return "rachat:" + hashlib.sha256(normalize(buyout.text).encode()).hexdigest()[:32]
+
+
 def feed_follows(previous: list[FeedRow], current: list[FeedRow]) -> bool:
     """Vrai si l'accueil actuel contient encore le haut de l'accueil lu la fois d'avant : aucune
     action n'a pu passer entre les deux lectures sans être vue."""

@@ -1,4 +1,4 @@
-"""Les annonces du ballottage SHM : un joueur soumis, puis réclamé ou pas.
+"""Les annonces du ballottage SHM (un joueur soumis, puis réclamé ou pas) et des rachats.
 
 Ce module écrit les messages. Il ne parle ni à SHM ni à Discord : il reçoit ce que le module
 `shm` a lu et les rôles du serveur, ce qui le rend facile à tester.
@@ -68,3 +68,13 @@ def unclaimed(waiver: shm.ShmWaiver, teams: dict[str, str], roles: list, emojis:
     where = where_unclaimed(waiver)
     return (f"↩️ **Pas réclamé** : personne n'a réclamé **{escape_markdown(waiver.name)}** "
             f"({team_label(waiver.team, teams, roles, emojis)})" + (f", {where}." if where else "."))
+
+
+def bought_out(buyout: shm.Buyout, teams: dict[str, str], roles: list, emojis: dict[str, str]) -> str:
+    if shm.known_team(buyout.team, teams.get(buyout.team)) is None:
+        # Un club-école dont l'équipe LNH est inconnue : on le nomme sans deviner.
+        who = f"Le club-école **{escape_markdown(teams.get(buyout.team) or buyout.team)}**"
+    else:
+        who = team_label(buyout.team, teams, roles, emojis)
+    return (f"💸 **Rachat** : {who} rachète le contrat de **{escape_markdown(buyout.player)}** "
+            f"(salaire du rachat : {escape_markdown(buyout.salary)} $).")

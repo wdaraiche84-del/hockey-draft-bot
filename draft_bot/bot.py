@@ -82,6 +82,8 @@ class DraftBot(discord.Client):
         self.shm_status: defaultdict[int, ShmStatus] = defaultdict(ShmStatus)
         # Les « Changements par équipe » lus la dernière fois, par ligue : pour savoir si rien n'a été manqué.
         self.shm_feeds: dict[str, list[shm.FeedRow]] = {}
+        # Club-école -> équipe LNH, appris sur l'accueil de chaque ligue.
+        self.shm_farms: defaultdict[str, dict[str, str]] = defaultdict(dict)
         self.tree = app_commands.CommandTree(self)
         # Un verrou par serveur : deux commandes ne modifient jamais le même draft en même temps.
         self.locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -347,7 +349,10 @@ class DraftBot(discord.Client):
         except shm.ShmError as error:
             log.warning("Ballottage SHM illisible pour la ligue %s : %s", slug, error)
             errors.append(str(error))
-        claims, complete = await self.read_feed(slug) if waivers is not None else ({}, False)
+        feed, complete = await self.read_feed(slug)
+        claims = shm.feed_claims(feed) if feed is not None else {}
+        buyouts = shm.feed_buyouts(feed, self.shm_farms[slug]) if feed is not None else None
+        teams_known = (waivers.teams if waivers is not None else {}) | (teams if trades is not None else {})
         for guild_id, channel_id in followers:
             try:
                 channel = await self.shm_channel(guild_id, channel_id)
@@ -357,6 +362,8 @@ class DraftBot(discord.Client):
                     await self.publish_shm(guild_id, channel, trades, teams)
                 if waivers is not None:
                     await self.publish_waivers(guild_id, channel, waivers, claims, complete)
+                if buyouts is not None:
+                    await self.publish_buyouts(guild_id, channel, buyouts, teams_known)
                 if errors:
                     await self.shm_failed(guild_id, channel_id, errors[0])
                 else:
@@ -364,18 +371,18 @@ class DraftBot(discord.Client):
             except Exception:
                 log.exception("Annonces SHM impossibles sur le serveur %s", guild_id)
 
-    async def read_feed(self, slug: str) -> tuple[dict[str, str], bool]:
-        """Les joueurs réclamés au ballottage d'après l'accueil de la ligue, et si l'accueil couvre
-        tout depuis la lecture d'avant. L'accueil ne sert qu'à confirmer : illisible, il ne bloque rien."""
+    async def read_feed(self, slug: str) -> tuple[list[shm.FeedRow] | None, bool]:
+        """Les « Changements par équipe » de l'accueil (ou None), et s'ils couvrent tout depuis la
+        lecture d'avant. Illisible, l'accueil ne bloque ni les transactions ni le ballottage."""
         try:
             feed = await self.shm.feed(slug)
         except shm.ShmError as error:
             log.warning("Accueil SHM illisible pour la ligue %s : %s", slug, error)
             self.shm_feeds.pop(slug, None)
-            return {}, False
+            return None, False
         complete = shm.feed_follows(self.shm_feeds.get(slug, []), feed)
         self.shm_feeds[slug] = feed
-        return shm.feed_claims(feed), complete
+        return feed, complete
 
     @check_shm.before_loop
     async def before_check_shm(self) -> None:
@@ -495,6 +502,34 @@ class DraftBot(discord.Client):
                     posted += 1
                     self.store.add_log(guild_id, None, "ballottage SHM", summary)
             self.store.set_shm_waivers(guild_id, [asdict(waiver) for waiver in page.waivers])
+        return posted
+
+    async def publish_buyouts(self, guild_id: int, channel: discord.TextChannel, buyouts: list[shm.Buyout],
+                              teams: dict[str, str]) -> int:
+        """Annonce les rachats de l'accueil pas encore annoncés, du plus ancien au plus récent.
+
+        La première lecture retient les rachats déjà sur l'accueil sans les annoncer."""
+        guild = self.get_guild(guild_id)
+        posted = 0
+        async with self.locks[guild_id]:
+            primed = self.store.shm_buyouts_primed(guild_id)
+            roles, emojis = team_roles(guild), guild_emojis(guild)
+            for buyout in reversed(buyouts):
+                key = shm.buyout_key(buyout)
+                if self.store.is_announced(guild_id, key):
+                    continue
+                if primed:
+                    try:
+                        await channel.send(moves.bought_out(buyout, teams, roles, emojis), allowed_mentions=NO_PINGS)
+                    except discord.HTTPException:
+                        log.exception("Annonce d'un rachat impossible sur le serveur %s", guild_id)
+                        continue
+                    posted += 1
+                    self.store.add_log(guild_id, None, "rachat SHM",
+                                       f"{buyout.player} ({buyout.team}, {buyout.salary} $)")
+                self.store.mark_announced(guild_id, key)
+            if not primed:
+                self.store.set_shm_buyouts_primed(guild_id)
         return posted
 
     async def shm_ok(self, guild_id: int, channel: discord.TextChannel) -> None:
@@ -1566,7 +1601,7 @@ class ShmModal(BotModal):
         self.channel = self.ask(
             "Salon des annonces de transactions",
             discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=default),
-            "Le bot y publiera chaque nouvelle transaction et le ballottage.")
+            "Transactions, rachats et ballottage y seront publiés.")
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         channel = interaction.guild.get_channel(self.channel.values[0].id)
@@ -1617,6 +1652,9 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
     posted = await bot.publish_shm(guild.id, channel, page.trades, page.teams)
     if waivers is not None:
         await bot.publish_waivers(guild.id, channel, waivers, {}, False)
+    feed, _ = await bot.read_feed(slug)
+    if feed is not None:
+        await bot.publish_buyouts(guild.id, channel, shm.feed_buyouts(feed, bot.shm_farms[slug]), page.teams)
     await bot.shm_ok(guild.id, channel)
     count = len(page.trades)
     lines = [f"✅ **C'est branché!** Le bot suit la ligue `{slug}` sur SHM."]
@@ -1625,8 +1663,9 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
                      f"annoncée{'s' if posted > 1 else ''} dans {channel.mention}.")
     elif count:
         lines.append(f"Les {count} transactions déjà sur SHM ne sont pas réannoncées.")
-    lines.append(f"Chaque nouvelle transaction et chaque joueur soumis ou réclamé au ballottage sera annoncé "
-                 f"dans {channel.mention}, moins de {SHM_CHECK_MINUTES} minutes après être arrivé sur SHM.")
+    lines.append(f"Chaque nouvelle transaction, chaque rachat et chaque joueur soumis ou réclamé au ballottage "
+                 f"sera annoncé dans {channel.mention}, moins de {SHM_CHECK_MINUTES} minutes après être arrivé "
+                 "sur SHM.")
     await reply(interaction, "\n".join(lines))
     await bot.refresh_panels(guild)
 

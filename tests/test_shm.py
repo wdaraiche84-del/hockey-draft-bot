@@ -124,6 +124,21 @@ def test_reads_the_changes_of_the_real_home_page():
         shm.parse_feed("<html><body>Rien</body></html>")
 
 
+def test_buyouts_of_the_home_page_find_the_nhl_team_of_a_farm_club():
+    rows = shm.parse_feed(HOME)
+    farms = {}
+    buyouts = shm.feed_buyouts(rows, farms)
+    assert [(b.player, b.salary, b.team) for b in buyouts] == [
+        ("David Rittich", "1 000 000", "NYI"), ("Ethan Bear", "775 000", "NYI"), ("Dmitri Kulikov", "1 150 000", "FLA"),
+        ("Evan Rodrigues", "3 000 000", "FLA"), ("Niko Mikkola", "5 000 000", "FLA")]
+    # Rittich (logo BRG) a été descendu par NYI juste avant : BRG est le club-école de NYI, retenu
+    # pour Ethan Bear, qui n'a pas d'autre ligne.
+    assert farms == {"BRG": "NYI"}
+    alone = shm.feed_buyouts([shm.FeedRow("SPR", "gavel", "Jake Neighbours a été racheté au salaire de 900 000$")], {})
+    assert alone[0].team == "SPR"
+    assert len({shm.buyout_key(b) for b in buyouts}) == 5
+
+
 def test_home_page_tells_whether_something_could_have_been_missed():
     rows = shm.parse_feed(HOME)
     newer = [shm.FeedRow("MTL", "list", "Alignement mis à jour")] * 5 + rows[:25]
