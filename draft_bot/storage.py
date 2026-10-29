@@ -1,5 +1,6 @@
 """Stockage SQLite de l'état du draft. Un seul draft par serveur Discord."""
 
+import json
 import sqlite3
 import time
 import unicodedata
@@ -70,6 +71,8 @@ CONFIG_COLUMNS = {
     "trades_channel_id": "INTEGER",
     "shm_league": "TEXT",
     "shm_primed": "INTEGER NOT NULL DEFAULT 0",
+    # Les joueurs au ballottage lors de la dernière lecture SHM (JSON), ou NULL avant la première.
+    "shm_waivers": "TEXT",
 }
 
 # Logos appris par serveur (corrections des admins) : assez pour toutes les équipes et leurs variantes.
@@ -460,14 +463,15 @@ class Store:
     def set_shm_league(self, guild_id: int, slug: str | None) -> None:
         """La ligue SHM suivie par ce serveur, ou None pour arrêter.
 
-        Une nouvelle ligue repart de zéro : sa première lecture retient les transactions déjà
-        sur SHM sans les annoncer. La même ligue gardée telle quelle ne perd rien.
+        Une nouvelle ligue repart de zéro : sa première lecture retient les transactions et le
+        ballottage déjà sur SHM sans les annoncer. La même ligue gardée telle quelle ne perd rien.
         """
         with self.db:
             self.db.execute(
                 "INSERT INTO config (guild_id, shm_league, shm_primed) VALUES (?, ?, 0) "
                 "ON CONFLICT (guild_id) DO UPDATE SET shm_primed = CASE WHEN shm_league IS excluded.shm_league "
-                "THEN shm_primed ELSE 0 END, shm_league = excluded.shm_league",
+                "THEN shm_primed ELSE 0 END, shm_waivers = CASE WHEN shm_league IS excluded.shm_league "
+                "THEN shm_waivers ELSE NULL END, shm_league = excluded.shm_league",
                 (guild_id, slug),
             )
 
@@ -489,6 +493,16 @@ class Store:
     def set_shm_primed(self, guild_id: int) -> None:
         with self.db:
             self.db.execute("UPDATE config SET shm_primed = 1 WHERE guild_id = ?", (guild_id,))
+
+    def shm_waivers(self, guild_id: int) -> list[dict] | None:
+        """Les joueurs au ballottage lors de la dernière lecture, ou None si le ballottage n'a jamais été lu."""
+        row = self.db.execute("SELECT shm_waivers FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return json.loads(row[0]) if row and row[0] is not None else None
+
+    def set_shm_waivers(self, guild_id: int, waivers: list[dict]) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_waivers = ? WHERE guild_id = ?",
+                            (json.dumps(waivers, ensure_ascii=False), guild_id))
 
     def learned_logos(self, guild_id: int) -> list[tuple[int, bytes]]:
         """Les logos qu'un admin a associés à un rôle, du plus récent au plus ancien."""

@@ -1,9 +1,9 @@
-"""Les transactions lues directement sur le site SHM, avec le compte SHM du bot.
+"""Les transactions et le ballottage lus directement sur le site SHM, avec le compte SHM du bot.
 
 Le bot se connecte à SHM avec son propre compte (SHM_USERNAME et SHM_PASSWORD dans .env).
 Le commissaire d'une ligue ajoute ce compte comme membre de sa ligue, sans équipe. Le bot lit
-alors la page « Historique des transactions » de la ligue toutes les quelques minutes et
-annonce les nouvelles transactions dans Discord.
+alors toutes les quelques minutes la page « Historique des transactions », la page
+« Ballottage » et les « Changements par équipe » de l'accueil, et annonce ce qui est nouveau.
 
 Ce module lit la page et parle à SHM. Il ne connaît rien de Discord : les transactions qu'il
 rend sont celles du module `capture`, qui trouve les rôles et écrit les annonces.
@@ -73,6 +73,14 @@ def league_slug(text: str) -> str:
 
 def history_url(slug: str, page: int = 1) -> str:
     return f"{BASE_URL}/{slug}/trades/history" + (f"?page={page}" if page > 1 else "")
+
+
+def waivers_url(slug: str) -> str:
+    return f"{BASE_URL}/{slug}/waivers"
+
+
+def home_url(slug: str) -> str:
+    return f"{BASE_URL}/{slug}"
 
 
 @dataclass
@@ -203,6 +211,152 @@ def shm_key(sides: list[ShmSide]) -> str:
     return "shm:" + hashlib.sha256("#".join(sorted(parts)).encode()).hexdigest()[:32]
 
 
+# La page « Ballottage » : les joueurs soumis au ballottage en ce moment.
+
+@dataclass
+class ShmWaiver:
+    # Le numéro du joueur sur SHM et l'équipe qui le soumet : ne change pas tant qu'il est au ballottage.
+    key: str
+    name: str
+    team: str
+    # L'équipe qui le réclame pour l'instant, ou None (« Aucune »).
+    claimer: str | None = None
+    position: str = ""
+    age: str = ""
+    salary: str = ""
+    years: str = ""
+    # Où il va s'il n'est pas réclamé : « UFA » (joueur autonome) ou « AHL ».
+    dest: str = ""
+    ends: str = ""
+
+
+@dataclass
+class WaiversPage:
+    waivers: list[ShmWaiver]
+    teams: dict[str, str]
+
+
+def title(cell) -> str:
+    """Le titre d'une colonne, simplifié : « Pos. / Alt. » donne « pos alt », « Réclamé » donne « reclame »."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", normalize(cell_text(cell))).split())
+
+
+def cell_text(cell) -> str:
+    return " ".join(cell.get_text(" ").split())
+
+
+def cell_team(cell) -> str | None:
+    """Le code de l'équipe d'une case : le texte de remplacement de son logo, ou None (« Aucune »)."""
+    image = cell.find("img")
+    if image is not None:
+        code = (image.get("alt") or "").strip() or logo_file(image.get("src", "")).rsplit(".", 1)[0]
+        return code or None
+    return None
+
+
+def parse_waivers(html: str) -> WaiversPage:
+    """Les joueurs de la page « Ballottage ». Les colonnes sont trouvées par leur titre."""
+    soup = BeautifulSoup(html, "html.parser")
+    if is_login_page(soup):
+        raise LoginNeeded("SHM demande de se connecter.")
+    teams, _ = page_teams(soup)
+    table = None
+    for candidate in soup.find_all("table"):
+        titles = [title(th) for th in candidate.select("thead th")]
+        if "soumis" in titles and "nom" in titles:
+            table, columns = candidate, {title: i for i, title in reversed(list(enumerate(titles))) if title}
+            break
+    if table is None:
+        if teams:
+            # Aucun joueur au ballottage : SHM n'affiche peut-être pas de tableau du tout.
+            return WaiversPage([], teams)
+        raise ShmError("Je ne trouve pas la page du ballottage sur SHM. Le compte SHM du bot est-il bien "
+                       "membre de cette ligue ?")
+
+    def column(cells, title):
+        i = columns.get(title)
+        return cells[i] if i is not None and i < len(cells) else None
+
+    waivers = []
+    for row in table.select("tbody > tr"):
+        cells = row.find_all("td", recursive=False)
+        name_cell, team_cell = column(cells, "nom"), column(cells, "soumis")
+        if name_cell is None or team_cell is None:
+            continue
+        name, team = cell_text(name_cell), cell_team(team_cell)
+        if not name or not team:
+            continue
+        badge = row.find(attrs={"data-player-id": True})
+        player = badge["data-player-id"] if badge else normalize(name)
+        claimer_cell = column(cells, "reclame")
+        position = cell_text(column(cells, "pos alt")) if column(cells, "pos alt") else ""
+        waivers.append(ShmWaiver(
+            key=f"{player}:{team}", name=name, team=team,
+            claimer=cell_team(claimer_cell) if claimer_cell is not None else None,
+            position=position.split("/")[0].strip(),
+            age=cell_text(column(cells, "age")) if column(cells, "age") else "",
+            salary=cell_text(column(cells, "salaire")) if column(cells, "salaire") else "",
+            years=cell_text(column(cells, "ans")) if column(cells, "ans") else "",
+            dest=cell_text(column(cells, "dest")) if column(cells, "dest") else "",
+            ends=cell_text(column(cells, "termine")) if column(cells, "termine") else ""))
+    return WaiversPage(waivers, teams)
+
+
+# Les « Changements par équipe » de l'accueil de la ligue : les 30 dernières actions des équipes.
+
+@dataclass(frozen=True)
+class FeedRow:
+    # Le code du logo (une équipe LNH, ou parfois son club-école de la LAH).
+    team: str
+    # L'icône de l'action : « gavel » (rachat), « exclamation-triangle » (soumis au ballottage),
+    # « check » (réclamé au ballottage), etc.
+    action: str
+    text: str
+
+
+def parse_feed(html: str) -> list[FeedRow]:
+    """Les lignes des « Changements par équipe », la plus récente en premier."""
+    soup = BeautifulSoup(html, "html.parser")
+    if is_login_page(soup):
+        raise LoginNeeded("SHM demande de se connecter.")
+    box = soup.select_one("div.teamLogsDiv")
+    if box is None:
+        raise ShmError("Je ne trouve pas les « Changements par équipe » sur l'accueil de la ligue SHM. "
+                       "Le compte SHM du bot est-il bien membre de cette ligue ?")
+    rows = []
+    for row in box.select("tbody > tr"):
+        cells = row.find_all("td", recursive=False)
+        if len(cells) < 3:
+            continue
+        image, icon = cells[0].find("img"), cells[1].find("i")
+        code = logo_file(image.get("src", "")).rsplit(".", 1)[0] if image else ""
+        action = next((c[3:] for c in (icon.get("class") or []) if c.startswith("fa-")), "") if icon else ""
+        rows.append(FeedRow(code, action, cell_text(cells[2])))
+    return rows
+
+
+CLAIMED = re.compile(r"^(.+?) a été réclamé au ballott?age", re.IGNORECASE)
+
+
+def feed_claims(rows: list[FeedRow]) -> dict[str, str]:
+    """Joueur (nom simplifié) -> équipe qui l'a réclamé au ballottage, d'après l'accueil."""
+    found = {}
+    for row in rows:
+        match = CLAIMED.match(row.text)
+        if match and row.team:
+            found.setdefault(normalize(match.group(1)), row.team)
+    return found
+
+
+def feed_follows(previous: list[FeedRow], current: list[FeedRow]) -> bool:
+    """Vrai si l'accueil actuel contient encore le haut de l'accueil lu la fois d'avant : aucune
+    action n'a pu passer entre les deux lectures sans être vue."""
+    if not previous:
+        return False
+    top = previous[:3]
+    return any(current[i:i + len(top)] == top for i in range(len(current) - len(top) + 1))
+
+
 class ShmClient:
     """Une connexion à SHM avec le compte du bot. Une seule page demandée à la fois."""
 
@@ -280,16 +434,32 @@ class ShmClient:
 
     async def history(self, slug: str, page: int = 1) -> ShmPage:
         """Une page de l'historique des transactions d'une ligue. Se connecte au besoin."""
+        return await self.read(history_url(slug, page), parse_history)
+
+    async def waivers(self, slug: str) -> WaiversPage:
+        """Les joueurs au ballottage dans une ligue."""
+        return await self.read(waivers_url(slug), parse_waivers)
+
+    async def feed(self, slug: str) -> list[FeedRow]:
+        """Les « Changements par équipe » de l'accueil d'une ligue."""
+        return await self.read(home_url(slug), parse_feed)
+
+    async def read(self, url: str, parse):
+        """Une page de ligue lue avec `parse`. Se connecte au besoin."""
         async with self.lock:
             for attempt in range(2):
                 if not self.logged_in:
                     await self.login()
-                url, html = await self._request("GET", history_url(slug, page))
+                _, html = await self._request("GET", self.local(url))
                 try:
-                    return parse_history(html)
+                    return parse(html)
                 except LoginNeeded:
                     # La session a expiré : une seule nouvelle connexion, pas de boucle.
                     self.logged_in = False
                     if attempt:
                         raise ShmError("SHM redemande la connexion à chaque page. Le compte du bot est-il bloqué ?")
             raise AssertionError("inaccessible")
+
+    def local(self, url: str) -> str:
+        """L'adresse sur le serveur de ce client (le vrai SHM, ou le faux SHM des tests)."""
+        return self.base_url + url[len(BASE_URL):] if url.startswith(BASE_URL) else url

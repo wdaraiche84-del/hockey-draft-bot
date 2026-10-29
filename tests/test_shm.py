@@ -1,4 +1,4 @@
-"""Lecture de l'historique des transactions SHM et connexion au site avec le compte du bot."""
+"""Lecture des pages SHM (transactions, ballottage, accueil) et connexion au site avec le compte du bot."""
 
 import asyncio
 from pathlib import Path
@@ -11,6 +11,8 @@ from draft_bot import capture, shm
 FIXTURES = Path(__file__).parent / "fixtures"
 HISTORY = (FIXTURES / "shm_historique.html").read_text(encoding="utf-8")
 LOGIN = (FIXTURES / "shm_connexion.html").read_text(encoding="utf-8")
+WAIVERS = (FIXTURES / "shm_ballottage.html").read_text(encoding="utf-8")
+HOME = (FIXTURES / "shm_accueil.html").read_text(encoding="utf-8")
 
 
 def items(side):
@@ -85,6 +87,54 @@ def test_login_page_and_missing_table_are_recognized():
     assert empty.trades == [] and not empty.has_next
 
 
+# La page « Ballottage »
+
+def test_reads_every_player_of_the_real_waivers_page():
+    page = shm.parse_waivers(WAIVERS)
+    assert len(page.waivers) == 26 and len(page.teams) == 30
+    first, aman = page.waivers[0], page.waivers[1]
+    assert first == shm.ShmWaiver("1114:TOR", "Kevin Lankinen", "TOR", None, "G", "30", "4 500 000", "1", "UFA",
+                                  "dans 10 minutes")
+    # Une équipe le réclame déjà.
+    assert (aman.name, aman.team, aman.claimer, aman.position, aman.dest) == ("Nils Aman", "EDM", "NAS", "C", "AHL")
+    assert len({w.key for w in page.waivers}) == 26
+    assert {w.team for w in page.waivers} <= set(page.teams)
+
+
+def test_waivers_page_without_players_or_without_access():
+    empty = shm.parse_waivers('<a href="/lnhs_2/rosters/MTL">Montreal Canadiens</a><p>Aucun joueur</p>')
+    assert empty.waivers == [] and empty.teams == {"MTL": "Montreal Canadiens"}
+    with pytest.raises(shm.LoginNeeded):
+        shm.parse_waivers(LOGIN)
+    with pytest.raises(shm.ShmError, match="membre de cette ligue"):
+        shm.parse_waivers("<html><body><h3>Accès refusé</h3></body></html>")
+
+
+# Les « Changements par équipe » de l'accueil
+
+def test_reads_the_changes_of_the_real_home_page():
+    rows = shm.parse_feed(HOME)
+    assert len(rows) == 30
+    assert rows[0] == shm.FeedRow("BRG", "gavel", "David Rittich a été racheté au salaire de 1 000 000$")
+    assert shm.FeedRow("NYI", "exclamation-triangle", "Jonathan Drouin a été soumis au ballottage") in rows
+    assert shm.feed_claims(rows) == {"artyom zub": "MTL", "marcus foligno": "NAS"}
+    with pytest.raises(shm.LoginNeeded):
+        shm.parse_feed(LOGIN)
+    with pytest.raises(shm.ShmError):
+        shm.parse_feed("<html><body>Rien</body></html>")
+
+
+def test_home_page_tells_whether_something_could_have_been_missed():
+    rows = shm.parse_feed(HOME)
+    newer = [shm.FeedRow("MTL", "list", "Alignement mis à jour")] * 5 + rows[:25]
+    assert shm.feed_follows(rows, rows)
+    assert shm.feed_follows(rows, newer)
+    # Plus de 30 nouvelles actions : le haut d'avant a disparu.
+    assert not shm.feed_follows(rows, newer[:5] + rows[10:])
+    # Rien lu avant (le bot vient de démarrer) : on ne peut pas savoir.
+    assert not shm.feed_follows([], rows)
+
+
 @pytest.mark.parametrize("text", [
     "lnhs_2", " lnhs_2 ", "https://simulatedhockeymanager.ca/lnhs_2", "simulatedhockeymanager.ca/lnhs_2/",
     "https://simulatedhockeymanager.ca/lnhs_2/trades/history?page=2", "<https://www.simulatedhockeymanager.ca/lnhs_2>",
@@ -119,6 +169,8 @@ class FakeShm:
         app.router.add_post("/login", self.login)
         app.router.add_get("/home", self.home)
         app.router.add_get("/{slug}/trades/history", self.history)
+        app.router.add_get("/{slug}/waivers", self.page(WAIVERS))
+        app.router.add_get("/{slug}", self.page(HOME))
         self.app = app
 
     async def login_page(self, request):
@@ -139,6 +191,14 @@ class FakeShm:
 
     async def home(self, request):
         return web.Response(text="<html>Répertoire des ligues</html>", content_type="text/html")
+
+    def page(self, html):
+        async def handler(request):
+            if request.cookies.get("session") != "connecte":
+                raise web.HTTPFound("/login")
+            self.history_requests.append((request.match_info["slug"], request.path))
+            return web.Response(text=html, content_type="text/html")
+        return handler
 
     async def history(self, request):
         self.user_agents.add(request.headers.get("User-Agent"))
@@ -168,12 +228,9 @@ def with_server(fake, scenario):
         await site.start()
         port = site._server.sockets[0].getsockname()[1]
         client = shm.ShmClient("HockeySimsTools", "secret", base_url=f"http://127.0.0.1:{port}")
-        monkey_url = shm.history_url
-        shm.history_url = lambda slug, page=1: monkey_url(slug, page).replace(shm.BASE_URL, client.base_url)
         try:
             return await scenario(client)
         finally:
-            shm.history_url = monkey_url
             await client.close()
             await runner.cleanup()
     return asyncio.run(main())
@@ -189,6 +246,16 @@ def test_client_logs_in_once_then_reads_pages(fake_shm):
     assert fake_shm.logins == 1
     assert fake_shm.history_requests == [("lnhs_2", "1"), ("lnhs_2", "2")]
     assert fake_shm.user_agents == {shm.USER_AGENT}
+
+
+def test_client_reads_the_waivers_and_home_pages_with_the_same_login(fake_shm):
+    async def scenario(client):
+        await client.history("lnhs_2")
+        return await client.waivers("lnhs_2"), await client.feed("lnhs_2")
+    waivers, feed = with_server(fake_shm, scenario)
+    assert len(waivers.waivers) == 26 and len(feed) == 30
+    assert fake_shm.logins == 1
+    assert fake_shm.history_requests[1:] == [("lnhs_2", "/lnhs_2/waivers"), ("lnhs_2", "/lnhs_2")]
 
 
 def test_client_logs_in_again_when_the_session_expires(fake_shm):

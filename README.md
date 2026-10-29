@@ -77,9 +77,17 @@ Le bot peut aussi lire lui-même les transactions sur SHM et les annoncer sans q
 
 Ensuite, le bot regarde la page **Historique des transactions** de la ligue toutes les 5 minutes et annonce chaque nouvelle transaction, de la plus ancienne à la plus récente, dans le même format que les captures. Une transaction déjà annoncée avec une capture n'est pas répétée, et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
 
+Le bot suit aussi le **ballottage** de la ligue, dans le même salon :
+
+- ⚠️ un joueur **soumis** au ballottage (équipe, position, âge, salaire, années de contrat, fin du ballottage), sans notification, car plusieurs joueurs sont souvent soumis en même temps ;
+- ✅ un joueur **réclamé** : l'équipe qui l'obtient et celle qui l'a soumis, avec notification des deux rôles ;
+- ↩️ un joueur **pas réclamé** (il devient joueur autonome ou va dans la LAH).
+
+Il lit pour ça la page **Ballottage** et les **Changements par équipe** de l'accueil de la ligue. L'accueil ne montre que les 30 dernières actions : si plus de 30 actions ont eu lieu entre deux lectures, le bot ne peut pas être sûr qu'un joueur n'a pas été réclamé à la dernière minute, alors il n'annonce pas « pas réclamé » (il ne devine jamais). Les joueurs déjà au ballottage quand on branche la ligue ne sont pas annoncés.
+
 **Plus d'options** montre l'état : la ligue suivie, le salon et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
 
-Le bot demande au plus une page SHM toutes les 2 secondes, et une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Si SHM refuse le mot de passe, le bot n'insiste pas (nouvel essai après 30 minutes), pour ne pas faire bloquer le compte.
+Le bot demande au plus une page SHM toutes les 2 secondes (d’habitude 3 pages par ligue toutes les 5 minutes), et une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Si SHM refuse le mot de passe, le bot n'insiste pas (nouvel essai après 30 minutes), pour ne pas faire bloquer le compte.
 
 ### Fichier des joueurs
 

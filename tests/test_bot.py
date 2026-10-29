@@ -57,8 +57,10 @@ class FakeChannel:
         self.mention = f"#{name}"
         self.messages = {}
         self.bot_allowed = bot_allowed
+        self.sent_mentions = []
 
     async def send(self, content, **kwargs):
+        self.sent_mentions.append(kwargs.get("allowed_mentions"))
         message = FakeMessage(self, content, kwargs.get("view"))
         self.messages[message.id] = message
         return message
@@ -71,6 +73,9 @@ class FakeChannel:
 
     def texts(self):
         return [m.content for m in self.messages.values()]
+
+    def mentions(self):
+        return list(self.sent_mentions)
 
     def with_button(self):
         return [m for m in self.messages.values() if isinstance(m.view, PickButtonView)]
@@ -1525,6 +1530,8 @@ from draft_bot import shm
 from draft_bot.bot import ShmModal
 
 SHM_PAGE = (Path(__file__).parent / "fixtures" / "shm_historique.html").read_text(encoding="utf-8")
+SHM_WAIVERS = (Path(__file__).parent / "fixtures" / "shm_ballottage.html").read_text(encoding="utf-8")
+SHM_HOME = (Path(__file__).parent / "fixtures" / "shm_accueil.html").read_text(encoding="utf-8")
 SHM_ROLES = ["Red Wings", "Rangers", "Hurricanes", "Blackhawks", "Islanders", "Sénateurs", "Sabres", "Stars",
              "Kings", "Predators", "Flyers", "Blues", "Golden Knights", "Oilers", "Canadiens", "Sharks", "Admins"]
 
@@ -1534,14 +1541,39 @@ class FakeShmClient:
 
     def __init__(self):
         self.pages = {1: shm.parse_history(SHM_PAGE)}
-        self.error = None
+        self.waiver_page = shm.parse_waivers(SHM_WAIVERS)
+        self.home = shm.parse_feed(SHM_HOME)
+        self.error = self.waivers_error = self.home_error = None
         self.requests = []
+        self.other_requests = []
 
     async def history(self, slug, page=1):
         self.requests.append((slug, page))
         if self.error:
             raise shm.ShmError(self.error)
         return self.pages.get(page, shm.ShmPage([], {}, False))
+
+    async def waivers(self, slug):
+        self.other_requests.append((slug, "ballottage"))
+        if self.error or self.waivers_error:
+            raise shm.ShmError(self.error or self.waivers_error)
+        return shm.WaiversPage(list(self.waiver_page.waivers), self.waiver_page.teams)
+
+    async def feed(self, slug):
+        self.other_requests.append((slug, "accueil"))
+        if self.error or self.home_error:
+            raise shm.ShmError(self.error or self.home_error)
+        return list(self.home)
+
+    def add_home(self, team, action, text):
+        """Une nouvelle ligne en haut des « Changements par équipe » ; la plus vieille disparaît."""
+        self.home = [shm.FeedRow(team, action, text)] + self.home[:29]
+
+    def waiver(self, name):
+        return next(w for w in self.waiver_page.waivers if w.name == name)
+
+    def end_waiver(self, name):
+        self.waiver_page.waivers.remove(self.waiver(name))
 
     def add_trade(self, sides):
         """Une nouvelle transaction confirmée sur SHM : elle arrive en haut de la page."""
@@ -1671,9 +1703,9 @@ def test_shm_long_outage_warns_once_then_says_it_is_back(shm_league, monkeypatch
     run(scenario())
     posted = channel.texts()
     assert len(posted) == 2
-    assert posted[0].startswith("⚠️ Je n'arrive plus à lire les transactions sur SHM depuis une heure")
+    assert posted[0].startswith("⚠️ Je n'arrive plus à lire SHM depuis une heure")
     assert "erreur 502" in posted[0]
-    assert posted[1] == "✅ Je lis de nouveau les transactions sur SHM."
+    assert posted[1] == "✅ Je lis de nouveau SHM : les annonces reprennent."
 
 
 def test_after_a_long_break_the_next_pages_are_read_too(shm_league):
@@ -1707,9 +1739,11 @@ def test_two_servers_on_the_same_league_read_it_once(shm_league):
         await setup_shm_from_panel(bot, other, admin_of(other), other_channel, "lnhs_2")
         site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
         site.requests.clear()
+        site.other_requests.clear()
         await bot.check_shm()
     run(scenario())
     assert site.requests == [("lnhs_2", 1)]
+    assert site.other_requests == [("lnhs_2", "ballottage"), ("lnhs_2", "accueil")]
     assert len(channel.texts()) == 1 and len(other_channel.texts()) == 1
 
 
@@ -1794,6 +1828,134 @@ def test_shm_announcement_shows_team_emotes(shm_league):
     assert channel.texts() == [
         f"🔁 **Transaction**\n➡️ {mtl} {roles['Canadiens'].mention} reçoit : **Cole Caufield**\n"
         f"➡️ {edm} {roles['Oilers'].mention} reçoit : **Evan Bouchard**"]
+
+
+# Le ballottage SHM : un joueur soumis, puis réclamé ou pas
+
+def test_waivers_already_on_shm_are_quiet_then_new_ones_are_announced(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    mtl = FakeEmoji("MTL")
+    guild.emojis = [mtl]
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        quiet = list(channel.texts())
+        site.waiver_page.waivers.append(shm.ShmWaiver(
+            "999:MTL", "Brendan Gallagher", "MTL", None, "AD", "33", "6 500 000", "2", "UFA", "dans 1 jour"))
+        site.waiver_page.waivers.append(shm.ShmWaiver("998:NYI", "Pierre Engvall", "NYI", dest="AHL"))
+        await bot.check_shm()
+        await bot.check_shm()
+        return i, quiet
+    i, quiet = run(scenario())
+    assert "ballottage" in i.last
+    assert quiet == []
+    assert channel.texts() == [
+        f"⚠️ **Ballottage** : {mtl} {roles['Canadiens'].mention} place **Brendan Gallagher** au ballottage.\n"
+        "AD · 33 ans · 6 500 000 $ · 2 ans de contrat\n"
+        "⏳ Se termine dans 1 jour. S'il n'est pas réclamé, il devient joueur autonome.",
+        f"⚠️ **Ballottage** : {roles['Islanders'].mention} place **Pierre Engvall** au ballottage.\n"
+        "S'il n'est pas réclamé, il est envoyé dans la LAH.",
+    ]
+    # Pas de notification pour un joueur soumis : la mention du rôle s'affiche sans sonner.
+    assert all(m == bot_module.NO_PINGS for m in channel.mentions())
+    assert [a for _, _, a, _ in store.log_entries(guild.id)].count("ballottage SHM") == 2
+
+
+def test_claimed_waiver_is_announced_with_the_claiming_team(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        # Nils Aman (EDM) était réclamé par NAS sur la page du ballottage.
+        site.end_waiver("Nils Aman")
+        site.add_home("NAS", "check", "Nils Aman a été réclamé au ballotage")
+        await bot.check_shm()
+        await bot.check_shm()
+    run(scenario())
+    assert channel.texts() == [
+        f"✅ **Réclamé au ballottage** : {roles['Predators'].mention} obtient **Nils Aman** "
+        f"(venant de {roles['Oilers'].mention})."]
+    assert channel.mentions() == [bot_module.PINGS]
+
+
+def test_the_home_page_decides_who_really_claimed_the_player(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        # Personne ne le réclamait à la lecture d'avant, mais MTL l'a réclamé juste avant la fin.
+        site.end_waiver("Kevin Lankinen")
+        site.add_home("MTL", "check", "Kevin Lankinen a été réclamé au ballotage")
+        await bot.check_shm()
+    run(scenario())
+    assert channel.texts() == [
+        f"✅ **Réclamé au ballottage** : {roles['Canadiens'].mention} obtient **Kevin Lankinen** "
+        "(venant de **Toronto Maple Leafs**)."]
+
+
+def test_unclaimed_waiver_is_announced_only_when_nothing_was_missed(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        site.end_waiver("Kevin Lankinen")
+        site.add_home("TOR", "list", "Alignement mis à jour")
+        await bot.check_shm()
+        sure = list(channel.texts())
+        # Plus de 30 actions entre deux lectures : l'accueil ne montre plus tout, on ne devine pas.
+        site.end_waiver("Chris Tanev")
+        for n in range(31):
+            site.add_home("TOR", "list", f"Action {n}")
+        await bot.check_shm()
+        return sure
+    sure = run(scenario())
+    assert sure == ["↩️ **Pas réclamé** : personne n'a réclamé **Kevin Lankinen** (**Toronto Maple Leafs**), "
+                    "il devient joueur autonome."]
+    assert channel.texts() == sure
+
+
+def test_waivers_and_trades_do_not_block_each_other(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        site.waivers_error = "La page du ballottage a changé."
+        site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
+        await bot.check_shm()
+        trade_only = list(channel.texts())
+        site.waivers_error = None
+        site.home_error = "L'accueil a changé."
+        site.waiver_page.waivers.append(shm.ShmWaiver("999:MTL", "Brendan Gallagher", "MTL"))
+        site.end_waiver("Nils Aman")
+        await bot.check_shm()
+        return trade_only
+    trade_only = run(scenario())
+    assert len(trade_only) == 1 and "Cole Caufield" in trade_only[0]
+    later = channel.texts()[1:]
+    # Sans l'accueil, la page du ballottage suffit : NAS le réclamait à la lecture d'avant.
+    assert len(later) == 2
+    assert "obtient **Nils Aman**" in later[0] and "place **Brendan Gallagher**" in later[1]
+    # L'accueil ne sert qu'à confirmer : son erreur n'est pas affichée aux admins.
+    assert bot.shm_status[guild.id].error is None
+
+
+def test_changing_league_forgets_the_old_waivers(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.waiver_page.waivers.clear()
+        await setup_shm_from_panel(bot, guild, admin, channel, "autre_ligue")
+        await bot.check_shm()
+    run(scenario())
+    # Les joueurs de l'ancienne ligue ne sont pas annoncés comme « pas réclamés ».
+    assert channel.texts() == []
+    assert store.shm_waivers(guild.id) == []
 
 
 def test_draft_pick_announcement_shows_the_team_emote(league):
