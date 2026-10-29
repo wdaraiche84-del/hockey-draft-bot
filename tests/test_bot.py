@@ -744,7 +744,7 @@ def test_more_options_keeps_every_feature_and_back_returns(league):
         panel_i = await open_panel(bot, guild, admin)
         panel = panel_i.view
         more = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
-        assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"]
+        assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "shm", "retour"]
         assert "Plus d'options" in more.last and "#draft-liste" in more.last and "4 choix" in more.last
         modals = {}
         for key, modal in (("salons", ChannelsModal), ("joueurs", PlayersModal), ("ordre", OrderModal),
@@ -1036,7 +1036,7 @@ def test_every_panel_screen_shows_few_buttons():
     assert phases == [
         ["salons", "transaction", "options"], ["joueurs", "transaction", "options"], ["ordre", "transaction", "options"], ["lancer", "transaction", "options"],
         ["choisir", "annuler", "transaction", "options"], ["annuler", "transaction", "options"],
-        ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"],
+        ["salons", "joueurs", "ordre", "delai", "echange", "journal", "shm", "retour"],
     ]
 
 
@@ -1517,3 +1517,248 @@ def test_capture_windows_and_preview_respect_discord_limits(nhl):
         assert preview.text(guild).endswith("**Annoncer**.")
         assert [type(c).__name__ for c in single.children] == ["Button", "Button", "Button"]
     run(scenario())
+
+
+# Transactions SHM automatiques : le bot lit lui-même l'historique de la ligue sur SHM
+
+from draft_bot import shm
+from draft_bot.bot import ShmModal
+
+SHM_PAGE = (Path(__file__).parent / "fixtures" / "shm_historique.html").read_text(encoding="utf-8")
+SHM_ROLES = ["Red Wings", "Rangers", "Hurricanes", "Blackhawks", "Islanders", "Sénateurs", "Sabres", "Stars",
+             "Kings", "Predators", "Flyers", "Blues", "Golden Knights", "Oilers", "Canadiens", "Sharks", "Admins"]
+
+
+class FakeShmClient:
+    """Le site SHM vu par le bot : des pages qu'on peut changer pendant le test."""
+
+    def __init__(self):
+        self.pages = {1: shm.parse_history(SHM_PAGE)}
+        self.error = None
+        self.requests = []
+
+    async def history(self, slug, page=1):
+        self.requests.append((slug, page))
+        if self.error:
+            raise shm.ShmError(self.error)
+        return self.pages.get(page, shm.ShmPage([], {}, False))
+
+    def add_trade(self, sides):
+        """Une nouvelle transaction confirmée sur SHM : elle arrive en haut de la page."""
+        page = self.pages[1]
+        page.trades.insert(0, sides)
+
+
+def new_trade(left, left_items, right, right_items):
+    return [shm.ShmSide(left, [capture.Item(t) for t in left_items]),
+            shm.ShmSide(right, [capture.Item(t) for t in right_items])]
+
+
+@pytest.fixture
+def shm_league():
+    store = Store(":memory:")
+    site = FakeShmClient()
+    bot = DraftBot(store, backup_dir=None, shm_client=site)
+    roles = [FakeRole(name) for name in SHM_ROLES]
+    trades = FakeChannel("transactions")
+    guild = FakeGuild(roles, [trades])
+    bot.get_guild = lambda guild_id: guild if guild_id == guild.id else None
+    return bot, store, guild, admin_of(guild), trades, {r.name: r for r in roles}, site
+
+
+async def setup_shm_from_panel(bot, guild, admin, channel, address):
+    panel = (await open_panel(bot, guild, admin)).view
+    await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+    opened = await click(panel, button(panel, "shm"), FakeInteraction(guild, admin))
+    modal = opened.response.modal
+    assert isinstance(modal, ShmModal), opened.sent
+    i = FakeInteraction(guild, admin)
+    await fill(modal, address=address, channel=[channel]).on_submit(i)
+    return i, panel
+
+
+def test_shm_setup_keeps_old_trades_quiet_then_announces_new_ones(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        i, panel = await setup_shm_from_panel(bot, guild, admin, channel,
+                                              "https://simulatedhockeymanager.ca/lnhs_2/trades/history")
+        quiet = list(channel.texts())
+        await bot.check_shm()
+        nothing_new = list(channel.texts())
+        site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Choix de 1re ronde 2027"]))
+        site.add_trade(new_trade("STL", ["Jordan Kyrou"], "VGK", ["Jack Eichel"]))
+        await bot.check_shm()
+        await bot.check_shm()
+        return i, quiet, nothing_new
+    i, quiet, nothing_new = run(scenario())
+    assert "C'est branché" in i.last and "lnhs_2" in i.last and "15 transactions déjà sur SHM" in i.last
+    assert store.shm_league(guild.id) == "lnhs_2" and store.trades_channel(guild.id) == channel.id
+    assert quiet == [] and nothing_new == []
+    posted = channel.texts()
+    # Les deux nouvelles, une seule fois chacune, la plus ancienne en premier.
+    assert posted == [
+        f"🔁 **Transaction**\n➡️ {roles['Canadiens'].mention} reçoit : **Cole Caufield**\n"
+        f"➡️ {roles['Oilers'].mention} reçoit : **Choix de 1re ronde 2027**",
+        f"🔁 **Transaction**\n➡️ {roles['Blues'].mention} reçoit : **Jordan Kyrou**\n"
+        f"➡️ {roles['Golden Knights'].mention} reçoit : **Jack Eichel**",
+    ]
+    assert [a for _, _, a, _ in store.log_entries(guild.id)].count("transaction SHM") == 2
+
+
+def test_shm_status_is_shown_in_more_options(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        panel = (await open_panel(bot, guild, admin)).view
+        ok = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        site.error = "Je n'arrive pas à joindre SHM en ce moment."
+        await bot.check_shm()
+        await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
+        failing = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        return ok.last, failing.last
+    ok, failing = run(scenario())
+    assert "Transactions SHM automatiques : ligue `lnhs_2` → #transactions (✅ lu à l'instant)" in ok
+    assert "⚠️ Je n'arrive pas à joindre SHM" in failing
+
+
+def test_trade_already_announced_with_a_capture_is_not_repeated(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        sides = new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"])
+        trade = shm.to_trade(sides, site.pages[1].teams)
+        capture.resolve(trade, guild.roles, [])
+        store.mark_announced(guild.id, capture.fingerprint(trade))
+        site.add_trade(sides)
+        await bot.check_shm()
+    run(scenario())
+    assert channel.texts() == []
+
+
+def test_renaming_a_role_does_not_announce_old_trades_again(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        roles["Red Wings"].name = "Les Red Wings de Détroit"
+        await bot.check_shm()
+    run(scenario())
+    assert channel.texts() == []
+
+
+def test_shm_long_outage_warns_once_then_says_it_is_back(shm_league, monkeypatch):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    now = [1_000_000.0]
+    monkeypatch.setattr(bot_module.time, "time", lambda: now[0])
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.error = "SHM ne répond pas bien en ce moment (erreur 502)."
+        await bot.check_shm()
+        now[0] += 30 * 60
+        await bot.check_shm()
+        assert channel.texts() == []
+        now[0] += 31 * 60
+        await bot.check_shm()
+        now[0] += 5 * 60
+        await bot.check_shm()
+        site.error = None
+        await bot.check_shm()
+        await bot.check_shm()
+    run(scenario())
+    posted = channel.texts()
+    assert len(posted) == 2
+    assert posted[0].startswith("⚠️ Je n'arrive plus à lire les transactions sur SHM depuis une heure")
+    assert "erreur 502" in posted[0]
+    assert posted[1] == "✅ Je lis de nouveau les transactions sur SHM."
+
+
+def test_after_a_long_break_the_next_pages_are_read_too(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        # Pendant que le bot était éteint, 15 transactions ont poussé les anciennes en page 2.
+        old = site.pages[1]
+        site.pages[2] = shm.ShmPage(old.trades[:5], old.teams, True)
+        site.pages[1] = shm.ShmPage(
+            [new_trade("MTL", [f"Joueur {n}"], "EDM", [f"Espoir {n}"]) for n in range(15, 0, -1)], old.teams, True)
+        site.requests.clear()
+        await bot.check_shm()
+    run(scenario())
+    assert site.requests == [("lnhs_2", 1), ("lnhs_2", 2)]
+    posted = channel.texts()
+    assert len(posted) == 15
+    assert "Joueur 1**" in posted[0] and "Joueur 15**" in posted[-1]
+
+
+def test_two_servers_on_the_same_league_read_it_once(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    other_channel = FakeChannel("transactions")
+    other = FakeGuild([FakeRole("Canadiens"), FakeRole("Oilers")], [other_channel])
+    guilds = {guild.id: guild, other.id: other}
+    bot.get_guild = guilds.get
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await setup_shm_from_panel(bot, other, admin_of(other), other_channel, "lnhs_2")
+        site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
+        site.requests.clear()
+        await bot.check_shm()
+    run(scenario())
+    assert site.requests == [("lnhs_2", 1)]
+    assert len(channel.texts()) == 1 and len(other_channel.texts()) == 1
+
+
+def test_shm_setup_problems_are_explained(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    locked = FakeChannel("verrouille", bot_allowed=False)
+    guild.channels[locked.id] = locked
+
+    async def scenario():
+        bad = (await setup_shm_from_panel(bot, guild, admin, channel, "https://exemple.com/lnhs_2"))[0]
+        no_access = (await setup_shm_from_panel(bot, guild, admin, locked, "lnhs_2"))[0]
+        site.error = "Je ne trouve pas le tableau des transactions sur SHM. Le compte SHM du bot est-il bien membre ?"
+        not_member = (await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2"))[0]
+        return bad.last, no_access.last, not_member.last
+    bad, no_access, not_member = run(scenario())
+    assert "simulatedhockeymanager.ca" in bad
+    assert "ne peut pas écrire" in no_access
+    assert "membre" in not_member and "Rien n'a été changé" in not_member
+    assert store.shm_league(guild.id) is None
+
+
+def test_shm_can_be_turned_off(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        off = (await setup_shm_from_panel(bot, guild, admin, channel, ""))[0]
+        site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
+        await bot.check_shm()
+        return off.last
+    assert "ne sont plus annoncées" in run(scenario())
+    assert store.shm_league(guild.id) is None and channel.texts() == []
+
+
+def test_shm_button_explains_when_the_bot_has_no_shm_account(league):
+    bot, store, guild, _, _, _ = league
+    admin = admin_of(guild)
+
+    async def scenario():
+        panel = (await open_panel(bot, guild, admin)).view
+        await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        return await click(panel, button(panel, "shm"), FakeInteraction(guild, admin))
+    i = run(scenario())
+    assert i.response.modal is None and "SHM_USERNAME" in i.last
+
+
+def test_shm_account_comes_from_env():
+    assert bot_module.shm_client_from_env({}) is None
+    client = bot_module.shm_client_from_env({"SHM_USERNAME": " HockeySimsTools ", "SHM_PASSWORD": "secret"})
+    assert client.username == "HockeySimsTools" and client.password == "secret"
+    with pytest.raises(bot_module.ConfigError):
+        bot_module.shm_client_from_env({"SHM_USERNAME": "HockeySimsTools"})

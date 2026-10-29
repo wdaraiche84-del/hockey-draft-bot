@@ -50,6 +50,10 @@ TEAMS = [
     ("VAN", "Vancouver Canucks", "Canucks de Vancouver", ["Canucks", "Vancouver"]),
     ("WSH", "Washington Capitals", "Capitals de Washington", ["Capitals", "Washington", "Caps"]),
     ("WPG", "Winnipeg Jets", "Jets de Winnipeg", ["Jets", "Winnipeg"]),
+    # Les équipes plus récentes : reconnues par leur nom sur la page SHM (pas encore de logo de capture).
+    ("SEA", "Seattle Kraken", "Kraken de Seattle", ["Kraken", "Seattle"]),
+    ("UTA", "Utah Mammoth", "Mammoth de l'Utah", ["Mammoth", "Utah", "Utah Hockey Club"]),
+    ("VGK", "Vegas Golden Knights", "Golden Knights de Vegas", ["Golden Knights", "Vegas", "Las Vegas"]),
 ]
 TEAM_NAMES = {code: english for code, english, _, _ in TEAMS}
 

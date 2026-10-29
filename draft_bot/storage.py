@@ -68,6 +68,8 @@ CONFIG_COLUMNS = {
     "button_message_id": "INTEGER",
     "started": "INTEGER NOT NULL DEFAULT 0",
     "trades_channel_id": "INTEGER",
+    "shm_league": "TEXT",
+    "shm_primed": "INTEGER NOT NULL DEFAULT 0",
 }
 
 # Logos appris par serveur (corrections des admins) : assez pour toutes les équipes et leurs variantes.
@@ -452,6 +454,41 @@ class Store:
     def trades_channel(self, guild_id: int) -> int | None:
         row = self.db.execute("SELECT trades_channel_id FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
         return row[0] if row else None
+
+    # Transactions SHM automatiques
+
+    def set_shm_league(self, guild_id: int, slug: str | None) -> None:
+        """La ligue SHM suivie par ce serveur, ou None pour arrêter.
+
+        Une nouvelle ligue repart de zéro : sa première lecture retient les transactions déjà
+        sur SHM sans les annoncer. La même ligue gardée telle quelle ne perd rien.
+        """
+        with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, shm_league, shm_primed) VALUES (?, ?, 0) "
+                "ON CONFLICT (guild_id) DO UPDATE SET shm_primed = CASE WHEN shm_league IS excluded.shm_league "
+                "THEN shm_primed ELSE 0 END, shm_league = excluded.shm_league",
+                (guild_id, slug),
+            )
+
+    def shm_league(self, guild_id: int) -> str | None:
+        row = self.db.execute("SELECT shm_league FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return row[0] if row else None
+
+    def shm_guilds(self) -> list[tuple[int, str, int | None]]:
+        """(serveur, ligue SHM, salon des transactions) de chaque serveur qui suit une ligue."""
+        rows = self.db.execute(
+            "SELECT guild_id, shm_league, trades_channel_id FROM config WHERE shm_league IS NOT NULL "
+            "ORDER BY guild_id").fetchall()
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    def shm_primed(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT shm_primed FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0])
+
+    def set_shm_primed(self, guild_id: int) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_primed = 1 WHERE guild_id = ?", (guild_id,))
 
     def learned_logos(self, guild_id: int) -> list[tuple[int, bytes]]:
         """Les logos qu'un admin a associés à un rôle, du plus récent au plus ancien."""

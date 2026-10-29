@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 from . import capture
 from . import formatting as fmt
+from . import shm
 from . import wheel
 from .storage import AlreadyRunning, Pick, PickError, Player, Store, normalize, team_display
 
@@ -51,13 +52,32 @@ MAX_IMAGE_BYTES = 10_000_000
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 # Temps maximal pour lire une capture (le premier essai après un démarrage est le plus lent).
 CAPTURE_SECONDS = 90
+# Le bot regarde l'historique des transactions SHM de chaque ligue suivie toutes les 5 minutes.
+SHM_CHECK_MINUTES = 5
+# Après une longue panne, le bot lit au plus 3 pages SHM (45 transactions) pour rattraper son retard.
+SHM_MAX_PAGES = 3
+# Les admins sont prévenus dans le salon quand SHM ne répond plus depuis une heure.
+SHM_WARN_SECONDS = 3600
+
+
+class ShmStatus:
+    """La dernière lecture SHM d'un serveur, pour le panneau et les avertissements."""
+
+    def __init__(self) -> None:
+        self.ok_at: float | None = None
+        self.error: str | None = None
+        self.failing_since: float | None = None
+        self.warned = False
 
 
 class DraftBot(discord.Client):
-    def __init__(self, store: Store, backup_dir: Path):
+    def __init__(self, store: Store, backup_dir: Path, shm_client: shm.ShmClient | None = None):
         super().__init__(intents=discord.Intents.default())
         self.store = store
         self.backup_dir = backup_dir
+        # Le compte SHM du bot, ou None s'il n'est pas configuré (SHM_USERNAME et SHM_PASSWORD).
+        self.shm = shm_client
+        self.shm_status: defaultdict[int, ShmStatus] = defaultdict(ShmStatus)
         self.tree = app_commands.CommandTree(self)
         # Un verrou par serveur : deux commandes ne modifient jamais le même draft en même temps.
         self.locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -78,6 +98,13 @@ class DraftBot(discord.Client):
         self.backup("demarrage")
         self.check_timers.start()
         self.hourly_backup.start()
+        if self.shm is not None:
+            self.check_shm.start()
+
+    async def close(self) -> None:
+        if self.shm is not None:
+            await self.shm.close()
+        await super().close()
 
     async def clear_global_commands(self) -> None:
         """Vide la liste globale chez Discord, pour éviter les doublons.
@@ -284,6 +311,131 @@ class DraftBot(discord.Client):
     @check_timers.before_loop
     async def before_check_timers(self) -> None:
         await self.wait_until_ready()
+
+    @tasks.loop(minutes=SHM_CHECK_MINUTES)
+    async def check_shm(self) -> None:
+        """Annonce les nouvelles transactions SHM de chaque ligue suivie.
+
+        Une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Une erreur sur une ligue
+        ou un serveur n'arrête jamais les autres.
+        """
+        leagues: defaultdict[str, list[tuple[int, int | None]]] = defaultdict(list)
+        for guild_id, slug, channel_id in self.store.shm_guilds():
+            if self.get_guild(guild_id) is not None:
+                leagues[slug].append((guild_id, channel_id))
+        for slug, followers in leagues.items():
+            try:
+                trades, teams = await self.read_shm(slug, [guild_id for guild_id, _ in followers])
+            except shm.ShmError as error:
+                log.warning("Lecture SHM impossible pour la ligue %s : %s", slug, error)
+                for guild_id, channel_id in followers:
+                    await self.shm_failed(guild_id, channel_id, str(error))
+                continue
+            except Exception:
+                log.exception("Erreur imprévue en lisant la ligue SHM %s", slug)
+                continue
+            for guild_id, channel_id in followers:
+                try:
+                    await self.publish_shm(guild_id, channel_id, trades, teams)
+                except Exception:
+                    log.exception("Annonce des transactions SHM impossible sur le serveur %s", guild_id)
+
+    @check_shm.before_loop
+    async def before_check_shm(self) -> None:
+        await self.wait_until_ready()
+
+    def all_new(self, guild_id: int, trades: list) -> bool:
+        return bool(trades) and not any(self.store.is_announced(guild_id, shm.shm_key(t)) for t in trades)
+
+    async def read_shm(self, slug: str, guild_ids: list[int]) -> tuple[list, dict[str, str]]:
+        """Les transactions d'une ligue, la plus récente en premier.
+
+        Si toute une page est nouvelle pour un serveur, la page suivante en contient peut-être
+        d'autres (le bot était éteint) : on la lit aussi, jusqu'à SHM_MAX_PAGES.
+        """
+        page = await self.shm.history(slug)
+        trades, teams = list(page.trades), dict(page.teams)
+        number = 1
+        primed = [g for g in guild_ids if self.store.shm_primed(g)]
+        while (page.has_next and number < SHM_MAX_PAGES
+               and any(self.all_new(g, page.trades) for g in primed)):
+            number += 1
+            page = await self.shm.history(slug, number)
+            trades += page.trades
+            teams.update(page.teams)
+        return trades, teams
+
+    async def publish_shm(self, guild_id: int, channel_id: int | None, trades: list, teams: dict[str, str]) -> int:
+        """Annonce les transactions pas encore annoncées sur ce serveur. Rend le nombre annoncé.
+
+        La première lecture d'une ligue retient les transactions déjà sur SHM sans les annoncer :
+        seules les suivantes sont annoncées.
+        """
+        guild = self.get_guild(guild_id)
+        channel = guild.get_channel(channel_id) if guild and channel_id else None
+        if channel is None or not bot_can_post(channel, guild):
+            await self.shm_failed(guild_id, channel_id, "Le bot ne peut pas écrire dans le salon des transactions.")
+            return 0
+        posted = 0
+        async with self.locks[guild_id]:
+            roles = team_roles(guild)
+            learned = self.store.learned_logos(guild_id)
+            fresh = []
+            for sides in trades:
+                key = shm.shm_key(sides)
+                if self.store.is_announced(guild_id, key):
+                    continue
+                trade = shm.to_trade(sides, teams)
+                capture.resolve(trade, roles, learned)
+                # Déjà annoncée avec une capture d'écran : on ne la répète pas.
+                if self.store.is_announced(guild_id, capture.fingerprint(trade)):
+                    self.store.mark_announced(guild_id, key)
+                    continue
+                fresh.append((key, trade))
+            primed = self.store.shm_primed(guild_id)
+            roles_by_id = {role.id: role for role in roles}
+            # SHM met la plus récente en haut : on annonce de la plus ancienne à la plus récente.
+            for key, trade in reversed(fresh):
+                if primed:
+                    await channel.send(capture.announcement(trade, roles_by_id), allowed_mentions=PINGS)
+                    posted += 1
+                    self.store.add_log(guild_id, None, "transaction SHM",
+                                       capture.summary(trade, roles_by_id, 500).replace("**", ""))
+                self.store.mark_announced(guild_id, key)
+                self.store.mark_announced(guild_id, capture.fingerprint(trade))
+            if not primed:
+                self.store.set_shm_primed(guild_id)
+        await self.shm_ok(guild_id, channel)
+        return posted
+
+    async def shm_ok(self, guild_id: int, channel: discord.TextChannel) -> None:
+        status = self.shm_status[guild_id]
+        if status.warned:
+            try:
+                await channel.send("✅ Je lis de nouveau les transactions sur SHM.", allowed_mentions=NO_PINGS)
+            except discord.HTTPException:
+                pass
+        status.ok_at, status.error, status.failing_since, status.warned = time.time(), None, None, False
+
+    async def shm_failed(self, guild_id: int, channel_id: int | None, error: str) -> None:
+        """Retient l'erreur pour le panneau. Après une heure de panne, prévient une seule fois dans le salon."""
+        status = self.shm_status[guild_id]
+        status.error = error
+        now = time.time()
+        if status.failing_since is None:
+            status.failing_since = now
+        if status.warned or now - status.failing_since < SHM_WARN_SECONDS:
+            return
+        status.warned = True
+        guild = self.get_guild(guild_id)
+        channel = guild.get_channel(channel_id) if guild and channel_id else None
+        if channel is None or not bot_can_post(channel, guild):
+            return
+        try:
+            await channel.send(f"⚠️ Je n'arrive plus à lire les transactions sur SHM depuis une heure : {error}\n"
+                               "Elles seront annoncées dès que ça remarche.", allowed_mentions=NO_PINGS)
+        except discord.HTTPException:
+            pass
 
     async def refresh_list(self, guild_id: int, channel: discord.TextChannel, repost: bool = False) -> None:
         """Met à jour les messages de la liste en ne modifiant que ceux qui ont changé."""
@@ -1297,6 +1449,98 @@ class TradeFixModal(BotModal):
         await self.preview.corrected(interaction, self.index, role_ids, texts)
 
 
+# Transactions SHM automatiques : le bot lit lui-même l'historique des transactions de la ligue sur SHM.
+
+SHM_NOT_CONFIGURED = (
+    "⚠️ Le compte SHM du bot n'est pas encore configuré.\n"
+    "La personne qui s'occupe du bot doit ajouter `SHM_USERNAME` et `SHM_PASSWORD` (le compte SHM du bot) "
+    "dans le fichier `.env` ou dans les variables Railway, puis redémarrer le bot.")
+
+
+class ShmModal(BotModal):
+    def __init__(self, bot: DraftBot, slug: str | None, channel_id: int | None):
+        super().__init__(bot, "Transactions SHM automatiques")
+        self.address = self.ask(
+            "Adresse de la ligue sur SHM",
+            discord.ui.TextInput(default=f"{shm.BASE_URL}/{slug}" if slug else None, required=False,
+                                 max_length=200, placeholder=f"{shm.BASE_URL}/ma_ligue"),
+            "Copie l'adresse de ta ligue sur SHM. Laisse vide pour arrêter les annonces automatiques.")
+        default = [discord.Object(id=channel_id, type=discord.TextChannel)] if channel_id else []
+        self.channel = self.ask(
+            "Salon des annonces de transactions",
+            discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=default),
+            "Le bot y publiera chaque nouvelle transaction.")
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        channel = interaction.guild.get_channel(self.channel.values[0].id)
+        await setup_shm(self.bot, interaction, text_value(self.address), channel)
+
+
+async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: str,
+                    channel: discord.TextChannel | None) -> None:
+    guild = interaction.guild
+    if not address.strip():
+        bot.store.set_shm_league(guild.id, None)
+        bot.shm_status.pop(guild.id, None)
+        bot.store.add_log(guild.id, interaction.user.id, "transactions SHM", "arrêtées")
+        await reply(interaction, "🔕 Les transactions SHM ne sont plus annoncées automatiquement.")
+        await bot.refresh_panels(guild)
+        return
+    if bot.shm is None:
+        await reply(interaction, SHM_NOT_CONFIGURED)
+        return
+    try:
+        slug = shm.league_slug(address)
+    except shm.ShmError as error:
+        await reply(interaction, f"❌ {error}")
+        return
+    if channel is None:
+        await reply(interaction, "Salon introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
+        return
+    if not bot_can_post(channel, guild):
+        await reply(interaction, f"🔒 Le bot ne peut pas écrire dans {channel.mention}. Corrige ses permissions "
+                    "ou choisis un autre salon.")
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    # Un essai tout de suite : l'admin sait aussitôt si le compte du bot voit bien la ligue.
+    try:
+        page = await bot.shm.history(slug)
+    except shm.ShmError as error:
+        await reply(interaction, f"❌ {error}\nRien n'a été changé.")
+        return
+    bot.store.set_trades_channel(guild.id, channel.id)
+    bot.store.set_shm_league(guild.id, slug)
+    bot.store.add_log(guild.id, interaction.user.id, "transactions SHM", f"ligue {slug} → #{channel.name}")
+    posted = await bot.publish_shm(guild.id, channel.id, page.trades, page.teams)
+    count = len(page.trades)
+    lines = [f"✅ **C'est branché!** Le bot suit la ligue `{slug}` sur SHM."]
+    if posted:
+        lines.append(f"{posted} nouvelle{'s' if posted > 1 else ''} transaction{'s' if posted > 1 else ''} "
+                     f"annoncée{'s' if posted > 1 else ''} dans {channel.mention}.")
+    elif count:
+        lines.append(f"Les {count} transactions déjà sur SHM ne sont pas réannoncées.")
+    lines.append(f"Chaque nouvelle transaction sera annoncée dans {channel.mention}, "
+                 f"moins de {SHM_CHECK_MINUTES} minutes après avoir été confirmée sur SHM.")
+    await reply(interaction, "\n".join(lines))
+    await bot.refresh_panels(guild)
+
+
+def shm_text(bot: DraftBot, guild: discord.Guild) -> str:
+    slug = bot.store.shm_league(guild.id)
+    if not slug:
+        return "désactivées"
+    channel_id = bot.store.trades_channel(guild.id)
+    channel = guild.get_channel(channel_id) if channel_id else None
+    text = f"ligue `{slug}`" + (f" → {channel.mention}" if channel else "")
+    status = bot.shm_status.get(guild.id)
+    if status and status.error:
+        text += f"\n　⚠️ {status.error}"
+    elif status and status.ok_at:
+        minutes = int((time.time() - status.ok_at) // 60)
+        text += " (✅ lu " + ("à l'instant" if minutes < 1 else f"il y a {minutes} min") + ")"
+    return text
+
+
 # Le panneau admin : un seul bouton pour la prochaine étape, le reste rangé dans « Plus d'options ».
 
 # Les étapes de préparation, dans l'ordre : (clé, nom du bouton, explication).
@@ -1312,6 +1556,7 @@ LAUNCH_STEP = "Lancer le draft"
 MORE_OPTIONS = "Plus d'options"
 TRADE_BUTTON = "Annoncer une transaction"
 CHANGE_CHANNELS = "Changer les salons"
+SHM_BUTTON = "Transactions SHM auto"
 
 
 def missing_setup_step(bot: DraftBot, guild: discord.Guild) -> int | None:
@@ -1370,6 +1615,7 @@ def panel_text(bot: DraftBot, guild: discord.Guild, more: bool = False) -> str:
             "• Ordre : " + (f"{picks} choix, {store.made_picks_count(guild.id)} déjà faits"
                             if picks else "pas encore défini"),
             f"• Délai : {delay_text(bot, guild)}",
+            f"• Transactions SHM automatiques : {shm_text(bot, guild)}",
             "",
             "Clique sur ce que tu veux faire, ou sur **Retour**.",
         ])
@@ -1454,6 +1700,7 @@ class AdminPanel(discord.ui.View):
             self.add("delai", "Délai par choix", self.open_delay, emoji="⌛", row=1)
             self.add("echange", "Échanger un choix", self.open_trade, emoji="🔁", row=1)
             self.add("journal", "Journal", self.journal, emoji="📒", row=1)
+            self.add("shm", SHM_BUTTON, self.open_shm, emoji="🔄", row=1)
             self.add("retour", "Retour", self.back, style=primary, emoji="⬅️", row=2)
             return panel_text(self.bot, guild, more=True)
         phase = panel_phase(self.bot, guild)
@@ -1540,6 +1787,13 @@ class AdminPanel(discord.ui.View):
 
     async def undo(self, interaction: discord.Interaction) -> None:
         await undo_last_pick(self.bot, interaction)
+
+    async def open_shm(self, interaction: discord.Interaction) -> None:
+        if self.bot.shm is None:
+            await reply(interaction, SHM_NOT_CONFIGURED)
+            return
+        await interaction.response.send_modal(ShmModal(self.bot, self.bot.store.shm_league(interaction.guild_id),
+                                                       self.bot.store.trades_channel(interaction.guild_id)))
 
     async def open_capture(self, interaction: discord.Interaction) -> None:
         if not capture_installed():
@@ -1706,6 +1960,19 @@ def check_library() -> None:
                           "Lance : pip install -U -r requirements.txt")
 
 
+def shm_client_from_env(env: dict) -> shm.ShmClient | None:
+    """Le compte SHM du bot, pour annoncer les transactions automatiquement. Facultatif."""
+    username = (env.get("SHM_USERNAME") or "").strip()
+    password = env.get("SHM_PASSWORD") or ""
+    if not username and not password:
+        log.info("Pas de compte SHM (SHM_USERNAME, SHM_PASSWORD) : transactions SHM automatiques désactivées.")
+        return None
+    if not username or not password:
+        raise ConfigError("Il faut SHM_USERNAME et SHM_PASSWORD ensemble dans .env (le compte SHM du bot), "
+                          "ou aucun des deux.")
+    return shm.ShmClient(username, password)
+
+
 def main() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
@@ -1717,11 +1984,12 @@ def main() -> None:
         warn_old_guild_ids(os.environ)
         db_path, backup_dir = resolve_paths(os.environ)
         log.info("Base du draft : %s · sauvegardes : %s", db_path.resolve(), backup_dir)
+        shm_client = shm_client_from_env(os.environ)
         store = open_store(db_path)
     except ConfigError as error:
         log.error("%s", error)
         raise SystemExit(1)
-    DraftBot(store, backup_dir).run(token)
+    DraftBot(store, backup_dir, shm_client).run(token)
 
 
 if __name__ == "__main__":

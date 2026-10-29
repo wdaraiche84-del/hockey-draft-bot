@@ -152,9 +152,9 @@ def test_exact_role_wins_over_a_role_that_only_contains_the_name():
     assert capture.role_for_team("BOS", roles("DG Bruins", "Bruins")).name == "Bruins"
 
 
-def test_every_team_has_a_logo_and_a_role_name():
+def test_every_team_has_a_role_name_and_the_30_shm_logos_are_known():
     logos = {path.stem for path in (ROOT / "draft_bot" / "logos").glob("*.png")}
-    assert logos == {code for code, *_ in capture.TEAMS}
+    assert logos <= {code for code, *_ in capture.TEAMS}
     assert len(logos) == 30
     for code, english, *_ in capture.TEAMS:
         assert capture.role_for_team(code, roles(english)).name == english

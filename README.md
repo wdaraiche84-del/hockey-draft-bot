@@ -63,6 +63,20 @@ Le bouton **📣 Annoncer une transaction** est toujours dans `/admin`, avant, p
 
 La lecture est **gratuite** et se fait sur l'ordinateur du bot (RapidOCR) : aucune image n'est envoyée ailleurs. Les logos des 30 équipes SHM sont reconnus. Le rôle d'une équipe est trouvé par son nom, son surnom, sa ville ou son code (« Bruins », « Les Bruins de Boston », « Boston », « BOS »). Si deux rôles conviennent, ou aucun, l'aperçu le signale et l'admin choisit avec **Corriger**. Rien n'est publié avant le clic sur **Annoncer**.
 
+### Transactions SHM automatiques
+
+Le bot peut aussi lire lui-même les transactions sur SHM et les annoncer sans que personne n'ait rien à faire.
+
+1. Le bot a son propre compte SHM (voir `SHM_USERNAME` et `SHM_PASSWORD` dans l'installation). Le commissaire de la ligue ajoute ce compte comme **membre de sa ligue, sans équipe**.
+2. Dans `/admin` : **Plus d'options**, puis **🔄 Transactions SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir le salon des annonces.
+3. Le bot essaie tout de suite : s'il ne voit pas la ligue, il le dit et ne change rien. S'il la voit, les transactions déjà sur SHM ne sont **pas** réannoncées : seules les suivantes le seront.
+
+Ensuite, le bot regarde la page **Historique des transactions** de la ligue toutes les 5 minutes et annonce chaque nouvelle transaction, de la plus ancienne à la plus récente, dans le même format que les captures. Une transaction déjà annoncée avec une capture n'est pas répétée, et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
+
+**Plus d'options** montre l'état : la ligue suivie, le salon et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
+
+Le bot demande au plus une page SHM toutes les 2 secondes, et une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Si SHM refuse le mot de passe, le bot n'insiste pas (nouvel essai après 30 minutes), pour ne pas faire bloquer le compte.
+
 ### Fichier des joueurs
 
 Un fichier CSV ou texte, une ligne par joueur : nom, équipe actuelle, position. La virgule, le point-virgule et la tabulation fonctionnent, et une ligne d'en-tête est ignorée.
@@ -110,6 +124,7 @@ python -m draft_bot
 ```
 
 6. Dans Discord : `/admin`, puis suivre les étapes 1, 2, 3 (et 4 pour un délai).
+7. Facultatif, pour les transactions SHM automatiques : créer un compte SHM pour le bot, puis écrire son nom d'utilisateur et son mot de passe dans `.env` (`SHM_USERNAME` et `SHM_PASSWORD`) et relancer le bot.
 
 ### Mettre à jour le bot
 
@@ -131,7 +146,7 @@ Inviter le bot sur le serveur avec le même lien d'invitation (portées `bot` et
 Le dépôt est prêt pour Railway : `railway.json` donne la commande de démarrage (`python -m draft_bot`) et redémarre le bot s'il plante, et `.python-version` fixe Python 3.12.
 
 1. Sur Railway : **New Project** > **Deploy from GitHub repo** > `hockey-draft-bot`.
-2. Dans le service : **Variables** > ajouter `DISCORD_TOKEN` (le jeton du bot). `GUILD_IDS` n'est plus nécessaire : elle peut être supprimée, elle ne gêne pas.
+2. Dans le service : **Variables** > ajouter `DISCORD_TOKEN` (le jeton du bot), et `SHM_USERNAME` et `SHM_PASSWORD` pour les transactions SHM automatiques. `GUILD_IDS` n'est plus nécessaire : elle peut être supprimée, elle ne gêne pas.
 3. Clic droit sur le service (ou **Ctrl+K**) > **Attach volume**, chemin de montage : `/data`. La base du draft, son journal et les sauvegardes y sont gardés entre les redéploiements.
 4. Arrêter le bot sur le PC avant que Railway le démarre : un même jeton ne doit tourner qu'à un seul endroit.
 
