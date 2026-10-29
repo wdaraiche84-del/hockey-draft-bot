@@ -1762,3 +1762,53 @@ def test_shm_account_comes_from_env():
     assert client.username == "HockeySimsTools" and client.password == "secret"
     with pytest.raises(bot_module.ConfigError):
         bot_module.shm_client_from_env({"SHM_USERNAME": "HockeySimsTools"})
+
+
+# Les emotes d'équipe
+
+class FakeEmoji:
+    def __init__(self, name, available=True):
+        self.id, self.name, self.available = next(ids), name, available
+
+    def __str__(self):
+        return f"<:{self.name}:{self.id}>"
+
+
+def test_team_emotes_are_found_by_code_or_nickname():
+    emotes = [FakeEmoji("PIT"), FakeEmoji("canadiens"), FakeEmoji("Toronto_Maple_Leafs"), FakeEmoji("NAS"),
+              FakeEmoji("PIT2"), FakeEmoji("hockey"), FakeEmoji("BOS", available=False)]
+    found = capture.team_emojis(emotes)
+    assert found == {"PIT": str(emotes[0]), "MTL": str(emotes[1]), "TOR": str(emotes[2]), "NSH": str(emotes[3])}
+
+
+def test_shm_announcement_shows_team_emotes(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    mtl, edm = FakeEmoji("MTL"), FakeEmoji("oilers")
+    guild.emojis = [mtl, edm]
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
+        await bot.check_shm()
+    run(scenario())
+    assert channel.texts() == [
+        f"🔁 **Transaction**\n➡️ {mtl} {roles['Canadiens'].mention} reçoit : **Cole Caufield**\n"
+        f"➡️ {edm} {roles['Oilers'].mention} reçoit : **Evan Bouchard**"]
+
+
+def test_draft_pick_announcement_shows_the_team_emote(league):
+    bot, store, guild, gm_laval, gm_granby, selections = league
+    penguins = FakeRole("Penguins")
+    guild.roles.append(penguins)
+    emote = FakeEmoji("PIT")
+    guild.emojis = [emote]
+    store.set_order(guild.id, ["Penguins", "laval"])
+    store.start_draft(guild.id)
+    gm = FakeMember(guild, [penguins])
+
+    async def scenario():
+        i = await command(bot, "draft", FakeInteraction(guild, gm), "Mario Lemieux")
+        await confirm(i)
+    run(scenario())
+    assert any(t.startswith(f"🏒 {emote} **Penguins** est fier de sélectionner **Mario Lemieux**")
+               for t in selections.texts())

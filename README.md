@@ -63,6 +63,10 @@ Le bouton **📣 Annoncer une transaction** est toujours dans `/admin`, avant, p
 
 La lecture est **gratuite** et se fait sur l'ordinateur du bot (RapidOCR) : aucune image n'est envoyée ailleurs. Les logos des 30 équipes SHM sont reconnus. Le rôle d'une équipe est trouvé par son nom, son surnom, sa ville ou son code (« Bruins », « Les Bruins de Boston », « Boston », « BOS »). Si deux rôles conviennent, ou aucun, l'aperçu le signale et l'admin choisit avec **Corriger**. Rien n'est publié avant le clic sur **Annoncer**.
 
+### Emotes d'équipe
+
+Si le serveur a une emote pour une équipe, le bot la met devant le nom de l'équipe dans les annonces de transactions et de choix au draft. L'emote doit porter le code ou le nom de l'équipe : `:PIT:`, `:pit:`, `:Penguins:` ou `:Pittsburgh_Penguins:` (pas `:PIT2:`). Rien à régler : le bot les trouve tout seul.
+
 ### Transactions SHM automatiques
 
 Le bot peut aussi lire lui-même les transactions sur SHM et les annoncer sans que personne n'ait rien à faire.

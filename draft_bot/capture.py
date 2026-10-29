@@ -28,7 +28,7 @@ TEAMS = [
     ("CAR", "Carolina Hurricanes", "Hurricanes de la Caroline", ["Hurricanes", "Carolina", "Caroline", "Canes"]),
     ("CHI", "Chicago Blackhawks", "Blackhawks de Chicago", ["Blackhawks", "Chicago"]),
     ("COL", "Colorado Avalanche", "Avalanche du Colorado", ["Avalanche", "Colorado", "Avalanches", "Avs"]),
-    ("CBJ", "Columbus Blue Jackets", "Blue Jackets de Columbus", ["Blue Jackets", "Columbus"]),
+    ("CBJ", "Columbus Blue Jackets", "Blue Jackets de Columbus", ["Blue Jackets", "Columbus", "CBS"]),
     ("DAL", "Dallas Stars", "Stars de Dallas", ["Stars", "Dallas"]),
     ("DET", "Detroit Red Wings", "Red Wings de Détroit", ["Red Wings", "Detroit"]),
     ("EDM", "Edmonton Oilers", "Oilers d'Edmonton", ["Oilers", "Edmonton"]),
@@ -36,7 +36,7 @@ TEAMS = [
     ("LAK", "Los Angeles Kings", "Kings de Los Angeles", ["Kings", "Los Angeles", "LA"]),
     ("MIN", "Minnesota Wild", "Wild du Minnesota", ["Wild", "Minnesota"]),
     ("MTL", "Montreal Canadiens", "Canadiens de Montréal", ["Canadiens", "Montreal", "Canadien", "Habs"]),
-    ("NSH", "Nashville Predators", "Predators de Nashville", ["Predators", "Nashville", "Preds"]),
+    ("NSH", "Nashville Predators", "Predators de Nashville", ["Predators", "Nashville", "Preds", "NAS"]),
     ("NJD", "New Jersey Devils", "Devils du New Jersey", ["Devils", "New Jersey", "NJ"]),
     ("NYI", "New York Islanders", "Islanders de New York", ["Islanders"]),
     ("NYR", "New York Rangers", "Rangers de New York", ["Rangers"]),
@@ -48,7 +48,7 @@ TEAMS = [
     ("TBL", "Tampa Bay Lightning", "Lightning de Tampa Bay", ["Lightning", "Tampa Bay", "Tampa", "TB"]),
     ("TOR", "Toronto Maple Leafs", "Maple Leafs de Toronto", ["Maple Leafs", "Toronto", "Leafs"]),
     ("VAN", "Vancouver Canucks", "Canucks de Vancouver", ["Canucks", "Vancouver"]),
-    ("WSH", "Washington Capitals", "Capitals de Washington", ["Capitals", "Washington", "Caps"]),
+    ("WSH", "Washington Capitals", "Capitals de Washington", ["Capitals", "Washington", "Caps", "WAS"]),
     ("WPG", "Winnipeg Jets", "Jets de Winnipeg", ["Jets", "Winnipeg"]),
     # Les équipes plus récentes : reconnues par leur nom sur la page SHM (pas encore de logo de capture).
     ("SEA", "Seattle Kraken", "Kraken de Seattle", ["Kraken", "Seattle"]),
@@ -375,6 +375,38 @@ def item_text(item: Item, find, by_id) -> str:
     return text
 
 
+# Les emotes d'équipe : une emote du serveur nommée comme l'équipe (« :PIT: », « :Penguins: »).
+
+def team_for_name(name: str) -> str | None:
+    """L'équipe LNH que désigne un nom (rôle, emote, nom SHM), si une seule convient le mieux."""
+    best, found = 0, []
+    for team in TEAM_ROLE_NAMES:
+        score = team_score(name, team)
+        if score > best:
+            best, found = score, [team]
+        elif score and score == best:
+            found.append(team)
+    return found[0] if len(found) == 1 else None
+
+
+def team_emojis(emojis) -> dict[str, str]:
+    """Code de l'équipe -> emote du serveur. Seul le nom complet de l'emote compte : « PIT », « pit »,
+    « Penguins » ou « Pittsburgh_Penguins » conviennent, « PIT2 » non."""
+    found: dict[str, str] = {}
+    for emoji in sorted(emojis, key=lambda e: e.name.lower()):
+        if not getattr(emoji, "available", True):
+            continue
+        name = emoji.name.replace("_", " ")
+        team = next((t for t in TEAM_ROLE_NAMES if team_score(name, t) == 2), None)
+        if team and team not in found:
+            found[team] = str(emoji)
+    return found
+
+
+def emoji_prefix(team: str | None, emojis: dict[str, str]) -> str:
+    return f"{emojis[team]} " if team in emojis else ""
+
+
 # Les messages.
 
 def side_label(side: Side, roles_by_id: dict, mention: bool) -> str:
@@ -396,10 +428,11 @@ def problems(trade: Trade, roles_by_id: dict) -> list[str]:
     return found
 
 
-def announcement(trade: Trade, roles_by_id: dict) -> str:
+def announcement(trade: Trade, roles_by_id: dict, emojis: dict[str, str] | None = None) -> str:
     lines = ["🔁 **Transaction**"]
     for side, texts in zip(trade.sides, trade.texts):
-        lines.append(f"➡️ {side_label(side, roles_by_id, mention=True)} reçoit : "
+        team = side.logo.team if side.logo is not None else None
+        lines.append(f"➡️ {emoji_prefix(team, emojis or {})}{side_label(side, roles_by_id, mention=True)} reçoit : "
                      + ", ".join(f"**{escape_markdown(t)}**" for t in texts))
     return "\n".join(lines)
 

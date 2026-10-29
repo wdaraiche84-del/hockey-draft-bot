@@ -126,12 +126,13 @@ def proud_team(team: str) -> tuple[str, str]:
     return f"Les {team}", "sont fiers"
 
 
-def announcement(pick: Pick, player: Player, forced: bool, team: str | None = None) -> str:
-    """« Les Bruins de Boston sont fiers de sélectionner … au 5e rang. »"""
+def announcement(pick: Pick, player: Player, forced: bool, team: str | None = None, emoji: str = "") -> str:
+    """« Les Bruins de Boston sont fiers de sélectionner … au 5e rang. » L'emote de l'équipe, s'il y en
+    a une, se place devant son nom."""
     subject, verb = proud_team(team or pick.team)
     details = " · ".join(escape_markdown(x) for x in (player.team, player.position) if x)
     text = (
-        f"🏒 **{escape_markdown(subject)}** {verb} de sélectionner **{escape_markdown(player.name)}**"
+        f"🏒 {emoji}**{escape_markdown(subject)}** {verb} de sélectionner **{escape_markdown(player.name)}**"
         + (f" ({details})" if details else "")
         + f" au **{ordinal(pick.number)} rang** (ronde {pick.round}, choix {pick.in_round})."
     )

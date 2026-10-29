@@ -397,7 +397,8 @@ class DraftBot(discord.Client):
             # SHM met la plus récente en haut : on annonce de la plus ancienne à la plus récente.
             for key, trade in reversed(fresh):
                 if primed:
-                    await channel.send(capture.announcement(trade, roles_by_id), allowed_mentions=PINGS)
+                    await channel.send(capture.announcement(trade, roles_by_id, guild_emojis(guild)),
+                                       allowed_mentions=PINGS)
                     posted += 1
                     self.store.add_log(guild_id, None, "transaction SHM",
                                        capture.summary(trade, roles_by_id, 500).replace("**", ""))
@@ -682,7 +683,10 @@ async def finish_pick(bot: DraftBot, interaction: discord.Interaction, number: i
             problems.append("les salons du draft sont introuvables (`/admin`, puis **Plus d'options**, **Changer les salons**)")
         else:
             role = bot.team_role(interaction.guild, pick.team)
-            text = fmt.announcement(pick, player, forced, role.name if role else None)
+            name = role.name if role else None
+            team = capture.team_for_name(name or pick.team)
+            text = fmt.announcement(pick, player, forced, name,
+                                    capture.emoji_prefix(team, guild_emojis(interaction.guild)))
             try:
                 message = await bot.post_with_clock(interaction.guild, channels[1], text)
                 store.set_pick_message(guild_id, pick.number, message.id)
@@ -1184,6 +1188,11 @@ async def read_capture(bot: DraftBot, data: bytes) -> dict:
         raise capture.CaptureError("La lecture de la capture a échoué. Réessaie, et préviens un admin si ça se répète.")
 
 
+def guild_emojis(guild: discord.Guild) -> dict[str, str]:
+    """Les emotes d'équipe du serveur (ex. :PIT:), ajoutées devant le nom des équipes dans les annonces."""
+    return capture.team_emojis(getattr(guild, "emojis", None) or [])
+
+
 def team_roles(guild: discord.Guild) -> list[discord.Role]:
     return [role for role in guild.roles if role.name != "@everyone" and not getattr(role, "managed", False)]
 
@@ -1392,7 +1401,7 @@ class TradePreview(discord.ui.View):
             # SHM met la plus récente en haut : on annonce de la plus ancienne à la plus récente.
             for i in reversed(chosen):
                 trade = self.trades[i]
-                await channel.send(capture.announcement(trade, roles), allowed_mentions=PINGS)
+                await channel.send(capture.announcement(trade, roles, guild_emojis(guild)), allowed_mentions=PINGS)
                 posted += 1
                 self.bot.store.mark_announced(guild.id, capture.fingerprint(trade))
                 self.bot.store.add_log(guild.id, interaction.user.id, "transaction",
