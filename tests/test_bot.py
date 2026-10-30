@@ -1532,6 +1532,7 @@ from draft_bot.bot import ShmModal
 SHM_PAGE = (Path(__file__).parent / "fixtures" / "shm_historique.html").read_text(encoding="utf-8")
 SHM_WAIVERS = (Path(__file__).parent / "fixtures" / "shm_ballottage.html").read_text(encoding="utf-8")
 SHM_HOME = (Path(__file__).parent / "fixtures" / "shm_accueil.html").read_text(encoding="utf-8")
+SHM_ROSTER = (Path(__file__).parent / "fixtures" / "shm_effectifs.html").read_text(encoding="utf-8")
 SHM_ROLES = ["Red Wings", "Rangers", "Hurricanes", "Blackhawks", "Islanders", "Sénateurs", "Sabres", "Stars",
              "Kings", "Predators", "Flyers", "Blues", "Golden Knights", "Oilers", "Canadiens", "Sharks", "Admins"]
 
@@ -1564,6 +1565,11 @@ class FakeShmClient:
         if self.error or self.home_error:
             raise shm.ShmError(self.error or self.home_error)
         return list(self.home)
+
+    async def farm(self, slug, code):
+        self.other_requests.append((slug, f"effectifs {code}"))
+        # Dans ce faux SHM, seul Montréal a un club-école connu : Laval (LAV).
+        return ("LAV", "Laval Rocket") if code == "MTL" else None
 
     def add_home(self, team, action, text):
         """Une nouvelle ligne en haut des « Changements par équipe » ; la plus vieille disparaît."""
@@ -1989,6 +1995,27 @@ def test_buyouts_already_on_shm_are_quiet_then_new_ones_are_announced(shm_league
     ]
     assert all(m == bot_module.NO_PINGS for m in channel.mentions())
     assert [a for _, _, a, _ in store.log_entries(guild.id)].count("rachat SHM") == 3
+
+
+def test_unknown_farm_club_is_found_on_the_roster_pages_once(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.other_requests.clear()
+        site.add_home("LAV", "gavel", "Josh Anderson a été racheté au salaire de 2 750 000$")
+        await bot.check_shm()
+        first = [r for r in site.other_requests if r[1].startswith("effectifs")]
+        site.other_requests.clear()
+        site.add_home("LAV", "gavel", "Rafael Harvey-Pinard a été racheté au salaire de 800 000$")
+        await bot.check_shm()
+        again = [r for r in site.other_requests if r[1].startswith("effectifs")]
+        return first, again
+    first, again = run(scenario())
+    assert ("lnhs_2", "effectifs MTL") in first and len(first) <= 30
+    # Déjà appris : aucune page « Effectifs » relue.
+    assert again == []
+    assert [t.split(" rachète")[0] for t in channel.texts()] == [f"💸 **Rachat** : {roles['Canadiens'].mention}"] * 2
 
 
 def test_buyout_still_on_the_home_page_after_a_restart_is_not_repeated(shm_league):

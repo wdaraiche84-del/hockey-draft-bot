@@ -13,6 +13,7 @@ HISTORY = (FIXTURES / "shm_historique.html").read_text(encoding="utf-8")
 LOGIN = (FIXTURES / "shm_connexion.html").read_text(encoding="utf-8")
 WAIVERS = (FIXTURES / "shm_ballottage.html").read_text(encoding="utf-8")
 HOME = (FIXTURES / "shm_accueil.html").read_text(encoding="utf-8")
+ROSTER = (FIXTURES / "shm_effectifs.html").read_text(encoding="utf-8")
 
 
 def items(side):
@@ -137,6 +138,15 @@ def test_buyouts_of_the_home_page_find_the_nhl_team_of_a_farm_club():
     alone = shm.feed_buyouts([shm.FeedRow("SPR", "gavel", "Jake Neighbours a été racheté au salaire de 900 000$")], {})
     assert alone[0].team == "SPR"
     assert len({shm.buyout_key(b) for b in buyouts}) == 5
+
+
+def test_roster_page_gives_the_farm_club():
+    assert shm.parse_farm(ROSTER, "ARI") == ("TUS", "Tucson Roadrunners")
+    # Une page sans club-école (ou sans joueurs) ne donne rien plutôt que de deviner.
+    assert shm.parse_farm("<h1>Arizona Coyotes</h1><table><tbody><tr><td><img alt='ARI'></td></tr></tbody></table>",
+                          "ARI") is None
+    with pytest.raises(shm.LoginNeeded):
+        shm.parse_farm(LOGIN, "ARI")
 
 
 def test_home_page_tells_whether_something_could_have_been_missed():

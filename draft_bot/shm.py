@@ -83,6 +83,10 @@ def home_url(slug: str) -> str:
     return f"{BASE_URL}/{slug}"
 
 
+def roster_url(slug: str, code: str) -> str:
+    return f"{BASE_URL}/{slug}/rosters/{code}"
+
+
 @dataclass
 class ShmSide:
     code: str
@@ -396,6 +400,29 @@ def buyout_key(buyout: Buyout) -> str:
     return "rachat:" + hashlib.sha256(normalize(buyout.text).encode()).hexdigest()[:32]
 
 
+def parse_farm(html: str, code: str) -> tuple[str, str] | None:
+    """Le club-école d'une équipe d'après sa page « Effectifs » : (code, nom), ou None.
+
+    La page a un titre et un tableau par groupe : l'équipe LNH, son club-école de la LAH,
+    puis les juniors. Le code du club-école est sur le logo de ses joueurs.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    if is_login_page(soup):
+        raise LoginNeeded("SHM demande de se connecter.")
+    for heading in soup.find_all("h1"):
+        table = heading.find_next("table")
+        if table is None:
+            continue
+        codes = [(image.get("alt") or "").strip() for image in table.select("tbody img")]
+        codes = [c for c in codes if c]
+        if not codes:
+            continue
+        farm = max(set(codes), key=codes.count)
+        if farm not in (code, "JNR") and known_team(farm, None) is None:
+            return farm, " ".join(heading.get_text(" ").split())
+    return None
+
+
 def feed_follows(previous: list[FeedRow], current: list[FeedRow]) -> bool:
     """Vrai si l'accueil actuel contient encore le haut de l'accueil lu la fois d'avant : aucune
     action n'a pu passer entre les deux lectures sans être vue."""
@@ -491,6 +518,10 @@ class ShmClient:
     async def feed(self, slug: str) -> list[FeedRow]:
         """Les « Changements par équipe » de l'accueil d'une ligue."""
         return await self.read(home_url(slug), parse_feed)
+
+    async def farm(self, slug: str, code: str) -> tuple[str, str] | None:
+        """Le club-école (code, nom) d'une équipe de la ligue."""
+        return await self.read(roster_url(slug, code), lambda html: parse_farm(html, code))
 
     async def read(self, url: str, parse):
         """Une page de ligue lue avec `parse`. Se connecte au besoin."""

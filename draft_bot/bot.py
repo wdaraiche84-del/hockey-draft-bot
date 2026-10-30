@@ -12,7 +12,7 @@ import tempfile
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import discord
@@ -82,8 +82,10 @@ class DraftBot(discord.Client):
         self.shm_status: defaultdict[int, ShmStatus] = defaultdict(ShmStatus)
         # Les « Changements par équipe » lus la dernière fois, par ligue : pour savoir si rien n'a été manqué.
         self.shm_feeds: dict[str, list[shm.FeedRow]] = {}
-        # Club-école -> équipe LNH, appris sur l'accueil de chaque ligue.
+        # Club-école -> équipe LNH, appris sur l'accueil ou les pages « Effectifs » de chaque ligue.
         self.shm_farms: defaultdict[str, dict[str, str]] = defaultdict(dict)
+        # Les pages « Effectifs » déjà lues pour trouver un club-école, par ligue.
+        self.shm_rosters_read: defaultdict[str, set[str]] = defaultdict(set)
         self.tree = app_commands.CommandTree(self)
         # Un verrou par serveur : deux commandes ne modifient jamais le même draft en même temps.
         self.locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -353,6 +355,8 @@ class DraftBot(discord.Client):
         claims = shm.feed_claims(feed) if feed is not None else {}
         buyouts = shm.feed_buyouts(feed, self.shm_farms[slug]) if feed is not None else None
         teams_known = (waivers.teams if waivers is not None else {}) | (teams if trades is not None else {})
+        if buyouts:
+            buyouts = await self.find_farms(slug, buyouts, teams_known, [g for g, _ in followers])
         for guild_id, channel_id in followers:
             try:
                 channel = await self.shm_channel(guild_id, channel_id)
@@ -370,6 +374,36 @@ class DraftBot(discord.Client):
                     await self.shm_ok(guild_id, channel)
             except Exception:
                 log.exception("Annonces SHM impossibles sur le serveur %s", guild_id)
+
+    async def find_farms(self, slug: str, buyouts: list[shm.Buyout], teams: dict[str, str],
+                         guild_ids: list[int]) -> list[shm.Buyout]:
+        """Remplace le club-école d'un rachat à annoncer par son équipe LNH.
+
+        Si l'accueil ne l'a pas dit, le bot lit les pages « Effectifs » des équipes jusqu'à trouver
+        à qui appartient ce club-école (une seule fois par équipe tant que le bot tourne)."""
+        farms = self.shm_farms[slug]
+
+        def to_announce(buyout):
+            key = shm.buyout_key(buyout)
+            return any(self.store.shm_buyouts_primed(g) and not self.store.is_announced(g, key) for g in guild_ids)
+
+        missing = {b.team for b in buyouts if shm.known_team(b.team, None) is None and b.team not in farms
+                   and to_announce(b)}
+        for farm in sorted(missing):
+            for code in teams:
+                if farm in farms:
+                    break
+                if code in self.shm_rosters_read[slug] or shm.known_team(code, teams.get(code)) is None:
+                    continue
+                try:
+                    found = await self.shm.farm(slug, code)
+                except shm.ShmError as error:
+                    log.warning("Page « Effectifs » %s illisible dans la ligue %s : %s", code, slug, error)
+                    break
+                self.shm_rosters_read[slug].add(code)
+                if found:
+                    farms[found[0]] = code
+        return [replace(b, team=farms[b.team]) if b.team in farms else b for b in buyouts]
 
     async def read_feed(self, slug: str) -> tuple[list[shm.FeedRow] | None, bool]:
         """Les « Changements par équipe » de l'accueil (ou None), et s'ils couvrent tout depuis la
