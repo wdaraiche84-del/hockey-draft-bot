@@ -83,6 +83,10 @@ def home_url(slug: str) -> str:
     return f"{BASE_URL}/{slug}"
 
 
+def standings_url(slug: str) -> str:
+    return f"{BASE_URL}/{slug}/standings"
+
+
 def roster_url(slug: str, code: str) -> str:
     return f"{BASE_URL}/{slug}/rosters/{code}"
 
@@ -114,7 +118,8 @@ def page_teams(soup: BeautifulSoup) -> tuple[dict[str, str], dict[str, str]]:
     for link in soup.select('a[href*="/rosters/"]'):
         code = link["href"].rstrip("/").rsplit("/", 1)[-1]
         name = " ".join(link.get_text(" ").split())
-        if not code or not name:
+        # « Mon équipe » : le lien vers l'équipe de la personne connectée, pas un nom d'équipe.
+        if not code or not name or normalize(name) in ("mon equipe", "my team"):
             continue
         names.setdefault(code, name)
         image = link.find("img")
@@ -423,6 +428,74 @@ def parse_farm(html: str, code: str) -> tuple[str, str] | None:
     return None
 
 
+# La page « Classements »
+
+@dataclass(frozen=True)
+class Standing:
+    position: str
+    team: str
+    games: str
+    wins: str
+    losses: str
+    otl: str
+    points: str
+
+
+@dataclass
+class StandingsPage:
+    # (titre, équipes dans l'ordre) : une division, une association ou toute la ligue.
+    groups: list[tuple[str, list[Standing]]]
+    teams: dict[str, str]
+
+
+def standing_rows(table) -> list[Standing]:
+    rows = []
+    for row in table.select("tbody > tr"):
+        link = row.select_one('a[href*="/rosters/"]')
+        if link is None:
+            continue
+
+        def value(column):
+            cell = row.find("td", attrs={"data-column": column})
+            return cell_text(cell) if cell is not None else ""
+        rows.append(Standing(value("position"), link["href"].rstrip("/").rsplit("/", 1)[-1], value("games_played"),
+                             value("wins"), value("losses"), value("otl"), value("pts")))
+    return rows
+
+
+def parse_standings(html: str) -> StandingsPage:
+    """Le classement de la ligue : par division si SHM en a, sinon par association, sinon la ligue entière.
+
+    La page a un onglet par vue : NHL (toute la ligue), une par association (avec ses divisions
+    sous un titre) et AHL. L'onglet AHL est ignoré.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    if is_login_page(soup):
+        raise LoginNeeded("SHM demande de se connecter.")
+    teams, _ = page_teams(soup)
+    divisions, conferences, league = [], [], []
+    for table in soup.find_all("table"):
+        pane = table.find_parent(class_="tab-pane")
+        pane_id = (pane.get("id") or "") if pane is not None else ""
+        if pane_id.upper() in ("AHL", "LAH"):
+            continue
+        rows = standing_rows(table)
+        if not rows:
+            continue
+        heading = table.find_previous_sibling(["h1", "h2", "h3", "h4", "h5"])
+        if heading is not None:
+            divisions.append((" ".join(heading.get_text(" ").split()), rows))
+        elif pane_id.upper() in ("NHL", "LNH", ""):
+            league.append(("Classement de la ligue", rows))
+        else:
+            conferences.append((f"Association {pane_id.capitalize()}", rows))
+    groups = divisions or conferences or league
+    if not groups:
+        raise ShmError("Je ne trouve pas le classement sur SHM. Le compte SHM du bot est-il bien membre de "
+                       "cette ligue ?")
+    return StandingsPage(groups, teams)
+
+
 def feed_follows(previous: list[FeedRow], current: list[FeedRow]) -> bool:
     """Vrai si l'accueil actuel contient encore le haut de l'accueil lu la fois d'avant : aucune
     action n'a pu passer entre les deux lectures sans être vue."""
@@ -518,6 +591,10 @@ class ShmClient:
     async def feed(self, slug: str) -> list[FeedRow]:
         """Les « Changements par équipe » de l'accueil d'une ligue."""
         return await self.read(home_url(slug), parse_feed)
+
+    async def standings(self, slug: str) -> StandingsPage:
+        """Le classement d'une ligue."""
+        return await self.read(standings_url(slug), parse_standings)
 
     async def farm(self, slug: str, code: str) -> tuple[str, str] | None:
         """Le club-école (code, nom) d'une équipe de la ligue."""

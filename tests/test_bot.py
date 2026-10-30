@@ -1526,13 +1526,14 @@ def test_capture_windows_and_preview_respect_discord_limits(nhl):
 
 # Transactions SHM automatiques : le bot lit lui-même l'historique de la ligue sur SHM
 
-from draft_bot import shm
+from draft_bot import moves, shm
 from draft_bot.bot import ShmModal
 
 SHM_PAGE = (Path(__file__).parent / "fixtures" / "shm_historique.html").read_text(encoding="utf-8")
 SHM_WAIVERS = (Path(__file__).parent / "fixtures" / "shm_ballottage.html").read_text(encoding="utf-8")
 SHM_HOME = (Path(__file__).parent / "fixtures" / "shm_accueil.html").read_text(encoding="utf-8")
 SHM_ROSTER = (Path(__file__).parent / "fixtures" / "shm_effectifs.html").read_text(encoding="utf-8")
+SHM_STANDINGS = (Path(__file__).parent / "fixtures" / "shm_classement.html").read_text(encoding="utf-8")
 SHM_ROLES = ["Red Wings", "Rangers", "Hurricanes", "Blackhawks", "Islanders", "Sénateurs", "Sabres", "Stars",
              "Kings", "Predators", "Flyers", "Blues", "Golden Knights", "Oilers", "Canadiens", "Sharks", "Admins"]
 
@@ -1544,6 +1545,7 @@ class FakeShmClient:
         self.pages = {1: shm.parse_history(SHM_PAGE)}
         self.waiver_page = shm.parse_waivers(SHM_WAIVERS)
         self.home = shm.parse_feed(SHM_HOME)
+        self.standings_page = shm.parse_standings(SHM_STANDINGS)
         self.error = self.waivers_error = self.home_error = None
         self.requests = []
         self.other_requests = []
@@ -1565,6 +1567,19 @@ class FakeShmClient:
         if self.error or self.home_error:
             raise shm.ShmError(self.error or self.home_error)
         return list(self.home)
+
+    async def standings(self, slug):
+        self.other_requests.append((slug, "classement"))
+        if self.error:
+            raise shm.ShmError(self.error)
+        return self.standings_page
+
+    def set_points(self, team, points, games):
+        """Une simulation : les points d'une équipe changent."""
+        for _, rows in self.standings_page.groups:
+            for i, row in enumerate(rows):
+                if row.team == team:
+                    rows[i] = shm.Standing(row.position, team, str(games), row.wins, row.losses, row.otl, str(points))
 
     async def farm(self, slug, code):
         self.other_requests.append((slug, f"effectifs {code}"))
@@ -1604,14 +1619,19 @@ def shm_league():
     return bot, store, guild, admin_of(guild), trades, {r.name: r for r in roles}, site
 
 
-async def setup_shm_from_panel(bot, guild, admin, channel, address):
+SAME = object()
+
+
+async def setup_shm_from_panel(bot, guild, admin, channel, address, waivers=SAME, buyouts=SAME, standings=None):
     panel = (await open_panel(bot, guild, admin)).view
     await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
     opened = await click(panel, button(panel, "shm"), FakeInteraction(guild, admin))
     modal = opened.response.modal
     assert isinstance(modal, ShmModal), opened.sent
     i = FakeInteraction(guild, admin)
-    await fill(modal, address=address, channel=[channel]).on_submit(i)
+    as_values = lambda c: [] if c is None else [channel if c is SAME else c]
+    await fill(modal, address=address, channel=[channel], waivers=as_values(waivers), buyouts=as_values(buyouts),
+               standings=as_values(standings)).on_submit(i)
     return i, panel
 
 
@@ -1657,7 +1677,8 @@ def test_shm_status_is_shown_in_more_options(shm_league):
         failing = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
         return ok.last, failing.last
     ok, failing = run(scenario())
-    assert "Transactions SHM automatiques : ligue `lnhs_2` → #transactions (✅ lu à l'instant)" in ok
+    assert "Annonces SHM automatiques : ligue `lnhs_2` (✅ lu à l'instant)" in ok
+    assert "Transactions → #transactions · Ballottage → #transactions · Rachats → #transactions · Classement → non" in ok
     assert "⚠️ Je n'arrive pas à joindre SHM" in failing
 
 
@@ -1780,7 +1801,7 @@ def test_shm_can_be_turned_off(shm_league):
         site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
         await bot.check_shm()
         return off.last
-    assert "ne sont plus annoncées" in run(scenario())
+    assert "sont arrêtées" in run(scenario())
     assert store.shm_league(guild.id) is None and channel.texts() == []
 
 
@@ -1854,7 +1875,7 @@ def test_waivers_already_on_shm_are_quiet_then_new_ones_are_announced(shm_league
         await bot.check_shm()
         return i, quiet
     i, quiet = run(scenario())
-    assert "ballottage" in i.last
+    assert "Ballottage : #transactions" in i.last
     assert quiet == []
     assert channel.texts() == [
         f"⚠️ **Ballottage** : {mtl} {roles['Canadiens'].mention} place **Brendan Gallagher** au ballottage.\n"
@@ -2030,6 +2051,110 @@ def test_buyout_still_on_the_home_page_after_a_restart_is_not_repeated(shm_leagu
         await restarted.check_shm()
     run(scenario())
     assert len(channel.texts()) == 1
+
+
+# Chaque sorte d'annonce SHM dans son salon, et le classement
+
+def test_each_kind_of_announcement_goes_to_its_own_channel(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    waivers, buyouts = FakeChannel("ballottage"), FakeChannel("rachats")
+    guild.channels.update({waivers.id: waivers, buyouts.id: buyouts})
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", waivers=waivers, buyouts=buyouts)
+        site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
+        site.waiver_page.waivers.append(shm.ShmWaiver("999:MTL", "Brendan Gallagher", "MTL"))
+        site.add_home("MTL", "gavel", "Josh Anderson a été racheté au salaire de 2 750 000$")
+        await bot.check_shm()
+        return i.last
+    text = run(scenario())
+    assert "Ballottage : #ballottage" in text and "Rachats : #rachats" in text and "Classement : pas annoncé" in text
+    assert len(channel.texts()) == 1 and "Cole Caufield" in channel.texts()[0]
+    assert len(waivers.texts()) == 1 and "Brendan Gallagher" in waivers.texts()[0]
+    assert len(buyouts.texts()) == 1 and "Josh Anderson" in buyouts.texts()[0]
+
+
+def test_turned_off_kind_is_remembered_quietly_and_not_flooded_when_turned_back_on(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", waivers=None)
+        site.waiver_page.waivers.append(shm.ShmWaiver("999:MTL", "Brendan Gallagher", "MTL"))
+        site.end_waiver("Nils Aman")
+        await bot.check_shm()
+        off = list(channel.texts())
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.waiver_page.waivers.append(shm.ShmWaiver("998:NYI", "Pierre Engvall", "NYI"))
+        await bot.check_shm()
+        return off
+    off = run(scenario())
+    assert off == []
+    # Rallumé : seul le joueur soumis ensuite est annoncé, pas ce qui s'est passé pendant l'arrêt.
+    assert len(channel.texts()) == 1 and "Pierre Engvall" in channel.texts()[0]
+    assert store.shm_channels(guild.id)["waivers"] == channel.id
+
+
+def test_standings_are_posted_then_edited_after_each_simulation(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    standings = FakeChannel("classement")
+    guild.channels[standings.id] = standings
+    ari = FakeEmoji("ARI")
+    guild.emojis = [ari]
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", standings=standings)
+        first = list(standings.texts())
+        await bot.check_shm()
+        unchanged = list(standings.texts())
+        site.set_points("ARI", 4, 2)
+        await bot.check_shm()
+        return i.last, first, unchanged
+    text, first, unchanged = run(scenario())
+    assert "Classement : #classement" in text
+    assert len(first) == 1 and first == unchanged
+    assert first[0].startswith("📊 **Classement**")
+    assert "**Division Pacifique**\n` 1.` " + str(ari) + " Arizona Coyotes — **0 pt** · 0 PJ · 0-0-0" in first[0]
+    # Le même message est modifié, pas un nouveau.
+    assert len(standings.texts()) == 1
+    assert f"{ari} Arizona Coyotes — **4 pts** · 2 PJ" in standings.texts()[0]
+    assert channel.texts() == []
+
+
+def test_standings_deleted_by_hand_are_posted_again_and_moved_with_the_channel(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    first, second = FakeChannel("classement"), FakeChannel("classement-2")
+    guild.channels.update({first.id: first, second.id: second})
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", standings=first)
+        first.messages.clear()
+        site.set_points("ARI", 2, 1)
+        await bot.check_shm()
+        reposted = list(first.texts())
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", standings=second)
+        return reposted
+    reposted = run(scenario())
+    assert len(reposted) == 1 and "**2 pts**" in reposted[0]
+    # Nouveau salon : l'ancien classement est effacé.
+    assert first.texts() == [] and len(second.texts()) == 1
+
+
+def test_shm_settings_window_fits_discord_limits(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    data = ShmModal(bot, guild.id).to_dict()
+    assert len(data["title"]) <= 45 and len(data["components"]) == 5
+    for row in data["components"]:
+        assert len(row["label"]) <= 45 and len(row.get("description") or "") <= 100
+
+
+def test_long_standings_are_split_without_cutting_a_division():
+    rows = [shm.Standing(str(n), "ARI", "82", "41", "30", "11", "93") for n in range(1, 9)]
+    page = shm.StandingsPage([(f"Division {n}", rows) for n in range(8)], {"ARI": "Arizona Coyotes"})
+    emojis = {"ARI": "<:ARI:123456789012345678>"}
+    messages = moves.standings(page, emojis)
+    assert len(messages) > 1 and all(len(m) <= 2000 for m in messages)
+    assert sum(m.count("**Division ") for m in messages) == 8
+    assert all(m.count("Arizona Coyotes") % 8 == 0 for m in messages)
 
 
 def test_draft_pick_announcement_shows_the_team_emote(league):

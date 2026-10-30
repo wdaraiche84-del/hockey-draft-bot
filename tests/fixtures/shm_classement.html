@@ -1,0 +1,3563 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><title>Classements</title></head>
+<body>
+<!-- Page « Classements » de la ligue hockey_sims_tools_test, réduite au menu des équipes et aux onglets. -->
+<nav><div class="dropdown-menu">
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ANA">Anaheim Ducks</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ARI">Arizona Coyotes</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BOS">Boston Bruins</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BUF">Buffalo Sabres</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CGY">Calgary Flames</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CAR">Carolina Hurricanes</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CHI">Chicago Blackhawks</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/COL">Colorado Avalanches</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CBS">Columbus Blue Jackets</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DAL">Dallas Stars</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DET">Detroit Red Wings</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/EDM">Edmonton Oilers</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/FLA">Florida Panthers</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/LAK">Los Angeles Kings</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MIN">Minnesota Wild</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MTL">Montreal Canadiens</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NAS">Nashville Predators</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NJ">New Jersey Devils</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYI">New York Islanders</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYR">New York Rangers</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/OTT">Ottawa Senators</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PHI">Philadelphia Flyers</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PIT">Pittsburgh Penguins</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/SJ">San Jose Sharks</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/STL">St. Louis Blues</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TB">Tampa Bay Lightning</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TOR">Toronto Maple Leafs</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/VAN">Vancouver Canucks</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WSH">Washington Capitals</a>
+<a class="dropdown-item" href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WPG">Winnipeg Jets</a>
+</div></nav>
+<div class="tab-content">
+<div class="tab-pane fade" id="NHL">
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg table-responsive-xl">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>1</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ANA" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ANA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>2</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WPG" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/WPG.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>3</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BOS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BOS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>4</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BUF" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BUF.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>5</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CGY" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CGY.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>6</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CAR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CAR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>7</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CHI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CHI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>8</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/COL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/COL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>9</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CBS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CBS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>10</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DAL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/DAL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>11</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DET" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/DET.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>12</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/EDM" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/EDM.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>13</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/FLA" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/FLA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>14</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/LAK" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/LAK.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>15</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MIN" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/MIN.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>16</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MTL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/MTL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>17</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NYI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>18</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NYR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>19</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NAS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NAS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>20</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NJ" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NJ.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>21</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/OTT" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/OTT.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>22</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PHI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/PHI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>23</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ARI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ARI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>24</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PIT" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/PIT.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>25</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/SJ" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/SJ.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>26</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/STL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/STL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>27</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TB" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TB.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>28</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TOR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TOR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>29</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/VAN" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/VAN.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>30</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WSH" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/WSH.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tab-pane fade show" id="EST">
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg table-responsive-xl">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>1</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NYR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>2</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TOR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TOR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>3</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CAR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CAR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>4</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PIT" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/PIT.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>5</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BOS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BOS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>6</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NYI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>7</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PHI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/PHI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>8</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TB" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TB.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>9</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WPG" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/WPG.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>10</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MTL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/MTL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>11</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/OTT" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/OTT.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>12</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NJ" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NJ.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>13</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/FLA" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/FLA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>14</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WSH" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/WSH.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>15</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BUF" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BUF.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+<div class="row no-gutters w-100">
+<h3>Division Atlantique</h3>
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>1</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NYR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>4</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PIT" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/PIT.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>6</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NYI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>7</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PHI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/PHI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>12</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NJ" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NJ.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="row no-gutters w-100">
+<h3>Division Nord-Est</h3>
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>2</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TOR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TOR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>5</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BOS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BOS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>10</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MTL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/MTL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>11</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/OTT" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/OTT.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>15</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BUF" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BUF.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="row no-gutters w-100">
+<h3>Division Sud-Est</h3>
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>3</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CAR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CAR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>8</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TB" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TB.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>9</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WPG" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/WPG.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>13</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/FLA" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/FLA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>14</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WSH" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/WSH.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="tab-pane fade show" id="OUEST">
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg table-responsive-xl">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>1</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ARI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ARI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>2</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/EDM" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/EDM.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>3</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/STL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/STL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>4</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/COL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/COL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>5</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CGY" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CGY.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>6</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DET" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/DET.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>7</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NAS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NAS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>8</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/SJ" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/SJ.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>9</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ANA" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ANA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>10</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DAL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/DAL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>11</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MIN" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/MIN.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>12</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/LAK" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/LAK.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>13</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CBS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CBS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>14</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/VAN" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/VAN.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>15</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CHI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CHI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+<div class="row no-gutters w-100">
+<h3>Division Pacifique</h3>
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>1</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ARI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ARI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>8</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/SJ" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/SJ.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>9</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ANA" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ANA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>10</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DAL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/DAL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>12</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/LAK" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/LAK.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="row no-gutters w-100">
+<h3>Division Centrale</h3>
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>3</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/STL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/STL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>6</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DET" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/DET.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>7</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NAS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/NAS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>13</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CBS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CBS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>15</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CHI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CHI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="row no-gutters w-100">
+<h3>Division Nord-Ouest</h3>
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>2</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/EDM" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/EDM.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>4</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/COL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/COL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>5</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CGY" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CGY.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>11</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MIN" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/MIN.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>14</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/VAN" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/VAN.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="tab-pane fade show active" id="AHL">
+<table class="table table-sm table-hover mt-3 table-responsive-sm table-responsive-md table-responsive-lg table-responsive-xl">
+<thead class="thead-dark">
+<tr>
+<th data-column="position" data-original-title="Position" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">Pos.</th>
+<th></th>
+<th>Équipe</th>
+<th data-column="games_played" data-original-title="Parties jouées" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PJ
+ </th>
+<th data-column="wins" data-original-title="Victoires" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">V
+ </th>
+<th data-column="losses" data-original-title="Défaites" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">D
+ </th>
+<th data-column="ot_losses" data-original-title="Défaites en prolongation/tirs de barrage" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DP
+ </th>
+<th data-column="pts" data-original-title="Points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">PTS
+ </th>
+<th data-column="pts_percentage" data-original-title="Pourcentage de points" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">%PTS
+ </th>
+<th data-column="goals_for" data-original-title="Buts pour" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BP
+ </th>
+<th data-column="goals_against" data-original-title="Buts contre" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">BC
+ </th>
+<th data-column="diff" data-original-title="Différentiel de buts" data-placement="top" data-sort="int" data-sort-default="desc" data-toggle="tooltip" title="">DIFF
+ </th>
+<th data-original-title="Fiche à domicile" data-placement="top" data-toggle="tooltip" title="">Domicile</th>
+<th data-original-title="Fiche à l'étranger" data-placement="top" data-toggle="tooltip" title="">Étranger</th>
+<th data-original-title="Fiche des 10 dernières parties" data-placement="top" data-toggle="tooltip" title="">10D</th>
+<th data-original-title="Séquence actuelle (victoires, défaites ou défaites en prolongation/tirs de barrage)" data-placement="top" data-toggle="tooltip" title="">Séquence</th>
+<th data-column="pp_percent" data-original-title="Pourcentage d'efficacité de l'avantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%AN
+ </th>
+<th data-column="pk_percent" data-original-title="Pourcentage d'efficacité du désavantage numérique" data-placement="top" data-sort="float" data-sort-default="desc" data-toggle="tooltip" title="">%DN
+ </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-column="position"><b>1</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ANA" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/SDG.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>2</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WPG" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/MAN.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>3</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BOS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/PRO.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>4</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/BUF" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ROC.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>5</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CGY" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/STO.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>6</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CAR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CHA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>7</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CHI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/RCK.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>8</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/COL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/SAN.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>9</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/CBS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CLE.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>10</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DAL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TEX.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>11</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/DET" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/GRD.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>12</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/EDM" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BAK.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>13</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/FLA" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/SPR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>14</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/LAK" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ONT.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>15</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MIN" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/IOA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>16</b></td>
+<td>
+<span class="badge badge-pill badge-success">X</span>
+</td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/MTL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/LAV.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>17</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BRG.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>18</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NYR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/HAR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>19</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NAS" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/MIL.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>20</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/NJ" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/ALB.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>21</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/OTT" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/BNG.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>22</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PHI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/LVP.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>23</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/ARI" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TUS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>24</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/PIT" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/WBS.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>25</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/SJ" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/SBA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>26</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/STL" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/CHW.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>27</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TB" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/SYR.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>28</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/TOR" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/TMA.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>29</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/VAN" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/UTI.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+<tr>
+<td data-column="position"><b>30</b></td>
+<td></td>
+<td>
+<a href="https://simulatedhockeymanager.ca/hockey_sims_tools_test/rosters/WSH" target="_blank">
+<img alt="team_logo" src="https://simulatedhockeymanager.ca/storage/logos/HER.png" width="45"/>
+</a>
+</td>
+<td data-column="games_played">0</td>
+<td data-column="wins">0</td>
+<td data-column="losses">0</td>
+<td data-column="otl">0</td>
+<td data-column="pts"><b>0</b></td>
+<td data-column="pts_percentage">0%</td>
+<td data-column="goals_for">0</td>
+<td data-column="goals_against">0</td>
+<td data-column="diff"><span style="color: green ">0</span>
+</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>0-0-0</td>
+<td>-</td>
+<td data-column="pp_percent">-%</td>
+<td data-column="pk_percent">-%</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</body></html>

@@ -1,4 +1,4 @@
-"""Les annonces du ballottage SHM (un joueur soumis, puis réclamé ou pas) et des rachats.
+"""Les annonces SHM autres que les transactions : ballottage, rachats et classement.
 
 Ce module écrit les messages. Il ne parle ni à SHM ni à Discord : il reçoit ce que le module
 `shm` a lu et les rôles du serveur, ce qui le rend facile à tester.
@@ -78,3 +78,36 @@ def bought_out(buyout: shm.Buyout, teams: dict[str, str], roles: list, emojis: d
         who = team_label(buyout.team, teams, roles, emojis)
     return (f"💸 **Rachat** : {who} rachète le contrat de **{escape_markdown(buyout.player)}** "
             f"(salaire du rachat : {escape_markdown(buyout.salary)} $).")
+
+
+# Le classement : quelques messages que le bot modifie après chaque simulation.
+
+STANDINGS_TITLE = "📊 **Classement**\n-# PJ : parties jouées · V-D-DP : victoires, défaites, défaites en prolongation"
+STANDINGS_FOOTER = "-# Mis à jour tout seul par le bot après chaque simulation sur SHM."
+MESSAGE_LIMIT = 1900
+
+
+def standing_line(rank: int, row: shm.Standing, teams: dict[str, str], emojis: dict[str, str]) -> str:
+    name = teams.get(row.team)
+    team = shm.known_team(row.team, name)
+    name = name or (capture.TEAM_NAMES.get(team) if team else None) or row.team
+    points = row.points or "0"
+    return (f"`{rank:>2}.` {capture.emoji_prefix(team, emojis)}{escape_markdown(name)} — "
+            f"**{points} pt{'s' if points not in ('0', '1') else ''}** · {row.games or 0} PJ · "
+            f"{row.wins or 0}-{row.losses or 0}-{row.otl or 0}")
+
+
+def standings(page: shm.StandingsPage, emojis: dict[str, str]) -> list[str]:
+    """Le classement en messages de moins de 2000 caractères, une division ne coupant jamais en deux."""
+    sections = [STANDINGS_TITLE]
+    for title, rows in page.groups:
+        lines = [f"**{escape_markdown(title)}**"]
+        lines += [standing_line(rank, row, page.teams, emojis) for rank, row in enumerate(rows, 1)]
+        sections.append("\n".join(lines))
+    sections.append(STANDINGS_FOOTER)
+    messages = [""]
+    for section in sections:
+        if messages[-1] and len(messages[-1]) + 2 + len(section) > MESSAGE_LIMIT:
+            messages.append("")
+        messages[-1] = f"{messages[-1]}\n\n{section}" if messages[-1] else section
+    return messages

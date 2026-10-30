@@ -67,12 +67,12 @@ La lecture est **gratuite** et se fait sur l'ordinateur du bot (RapidOCR) : aucu
 
 Si le serveur a une emote pour une équipe, le bot la met devant le nom de l'équipe dans les annonces de transactions et de choix au draft. L'emote doit porter le code ou le nom de l'équipe : `:PIT:`, `:pit:`, `:Penguins:` ou `:Pittsburgh_Penguins:` (pas `:PIT2:`). Rien à régler : le bot les trouve tout seul.
 
-### Transactions SHM automatiques
+### Annonces SHM automatiques (transactions, ballottage, rachats, classement)
 
 Le bot peut aussi lire lui-même les transactions sur SHM et les annoncer sans que personne n'ait rien à faire.
 
 1. Le bot a son propre compte SHM (voir `SHM_USERNAME` et `SHM_PASSWORD` dans l'installation). Le commissaire de la ligue ajoute ce compte comme **membre de sa ligue, sans équipe**.
-2. Dans `/admin` : **Plus d'options**, puis **🔄 Transactions SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir le salon des annonces.
+2. Dans `/admin` : **Plus d'options**, puis **🔄 Annonces SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir un salon pour chaque sorte d'annonce : transactions (obligatoire), ballottage, rachats et classement. Le même salon peut servir pour plusieurs. Laisser un salon vide arrête cette sorte d'annonce ; quand on la rallume, seul ce qui arrive ensuite est annoncé.
 3. Le bot essaie tout de suite : s'il ne voit pas la ligue, il le dit et ne change rien. S'il la voit, les transactions déjà sur SHM ne sont **pas** réannoncées : seules les suivantes le seront.
 
 Ensuite, le bot regarde la page **Historique des transactions** de la ligue toutes les 5 minutes et annonce chaque nouvelle transaction, de la plus ancienne à la plus récente, dans le même format que les captures. Une transaction déjà annoncée avec une capture n'est pas répétée, et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
@@ -87,7 +87,9 @@ Il lit pour ça la page **Ballottage** et les **Changements par équipe** de l'a
 
 Le bot annonce aussi les **rachats** (💸 l'équipe, le joueur et le salaire du rachat), lus dans les **Changements par équipe** de l'accueil, sans notification. SHM y montre parfois le logo du club-école (ex. Bridgeport) au lieu de l'équipe LNH : le bot retrouve l'équipe grâce à une autre ligne sur le même joueur (ex. « descendu en AHL » par les Islanders). Sinon, il lit les pages **Effectifs** des équipes jusqu'à trouver à qui appartient ce club-école (une seule fois par équipe tant que le bot tourne). Il retient ce club-école pour la suite. S'il ne le trouve nulle part, il nomme le club-école sans deviner. Les rachats déjà sur l'accueil quand on branche la ligue ne sont pas annoncés, et un rachat n'est jamais annoncé deux fois. Comme l'accueil ne montre que les 30 dernières actions, un rachat peut être manqué si plus de 30 actions ont lieu en 5 minutes.
 
-**Plus d'options** montre l'état : la ligue suivie, le salon et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
+Le bot peut aussi publier le **classement** de la ligue (par division) dans un salon. Il modifie ensuite le même message quand le classement change sur SHM, donc après chaque simulation : le salon reste propre. Si le message est effacé à la main, il est republié ; si on change de salon, l'ancien est effacé.
+
+**Plus d'options** montre l'état : la ligue suivie, le salon de chaque annonce et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
 
 Le bot demande au plus une page SHM toutes les 2 secondes (d’habitude 3 pages par ligue toutes les 5 minutes), et une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Si SHM refuse le mot de passe, le bot n'insiste pas (nouvel essai après 30 minutes), pour ne pas faire bloquer le compte.
 

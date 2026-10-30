@@ -340,7 +340,7 @@ class DraftBot(discord.Client):
 
     async def follow_league(self, slug: str, followers: list[tuple[int, int | None]]) -> None:
         errors: list[str] = []
-        trades = waivers = None
+        trades = waivers = standings = None
         try:
             trades, teams = await self.read_shm(slug, [guild_id for guild_id, _ in followers])
         except shm.ShmError as error:
@@ -357,23 +357,48 @@ class DraftBot(discord.Client):
         teams_known = (waivers.teams if waivers is not None else {}) | (teams if trades is not None else {})
         if buyouts:
             buyouts = await self.find_farms(slug, buyouts, teams_known, [g for g, _ in followers])
+        # Le classement n'est lu que si un serveur veut le publier.
+        if any(self.store.shm_channels(guild_id)["standings"] for guild_id, _ in followers):
+            try:
+                standings = await self.shm.standings(slug)
+            except shm.ShmError as error:
+                log.warning("Classement SHM illisible pour la ligue %s : %s", slug, error)
+                errors.append(str(error))
         for guild_id, channel_id in followers:
             try:
-                channel = await self.shm_channel(guild_id, channel_id)
-                if channel is None:
-                    continue
+                channels, locked = self.shm_channels(guild_id)
+                # Une sorte d'annonce arrêtée est quand même retenue, sans rien publier : la rallumer
+                # plus tard n'annonce que la suite.
                 if trades is not None:
-                    await self.publish_shm(guild_id, channel, trades, teams)
+                    await self.publish_shm(guild_id, channels["trades"], trades, teams)
                 if waivers is not None:
-                    await self.publish_waivers(guild_id, channel, waivers, claims, complete)
+                    await self.publish_waivers(guild_id, channels["waivers"], waivers, claims, complete)
                 if buyouts is not None:
-                    await self.publish_buyouts(guild_id, channel, buyouts, teams_known)
-                if errors:
-                    await self.shm_failed(guild_id, channel_id, errors[0])
+                    await self.publish_buyouts(guild_id, channels["buyouts"], buyouts, teams_known)
+                if standings is not None and channels["standings"] is not None:
+                    await self.publish_standings(guild_id, channels["standings"], standings)
+                problems = errors + ([f"Le bot ne peut pas écrire dans {', '.join(locked)}."] if locked else [])
+                if problems:
+                    await self.shm_failed(guild_id, channel_id, problems[0])
                 else:
-                    await self.shm_ok(guild_id, channel)
+                    await self.shm_ok(guild_id, channels["trades"])
             except Exception:
                 log.exception("Annonces SHM impossibles sur le serveur %s", guild_id)
+
+    def shm_channels(self, guild_id: int) -> tuple[dict[str, discord.TextChannel | None], list[str]]:
+        """Le salon de chaque sorte d'annonce SHM (None : arrêtée ou inutilisable), et les salons
+        choisis où le bot ne peut pas écrire."""
+        guild = self.get_guild(guild_id)
+        found, locked = {}, []
+        for kind, channel_id in self.store.shm_channels(guild_id).items():
+            channel = guild.get_channel(channel_id) if guild and channel_id else None
+            if channel_id and (channel is None or not bot_can_post(channel, guild)):
+                name = f"#{channel.name}" if channel is not None else "un salon effacé"
+                if name not in locked:
+                    locked.append(name)
+                channel = None
+            found[kind] = channel
+        return found, locked
 
     async def find_farms(self, slug: str, buyouts: list[shm.Buyout], teams: dict[str, str],
                          guild_ids: list[int]) -> list[shm.Buyout]:
@@ -443,21 +468,12 @@ class DraftBot(discord.Client):
             teams.update(page.teams)
         return trades, teams
 
-    async def shm_channel(self, guild_id: int, channel_id: int | None) -> discord.TextChannel | None:
-        """Le salon des annonces SHM, ou None (et un avertissement) si le bot ne peut pas y écrire."""
-        guild = self.get_guild(guild_id)
-        channel = guild.get_channel(channel_id) if guild and channel_id else None
-        if channel is None or not bot_can_post(channel, guild):
-            await self.shm_failed(guild_id, channel_id, "Le bot ne peut pas écrire dans le salon des transactions.")
-            return None
-        return channel
-
-    async def publish_shm(self, guild_id: int, channel: discord.TextChannel, trades: list,
+    async def publish_shm(self, guild_id: int, channel: discord.TextChannel | None, trades: list,
                           teams: dict[str, str]) -> int:
         """Annonce les transactions pas encore annoncées sur ce serveur. Rend le nombre annoncé.
 
         La première lecture d'une ligue retient les transactions déjà sur SHM sans les annoncer :
-        seules les suivantes sont annoncées.
+        seules les suivantes sont annoncées. Sans salon, elles sont retenues sans être annoncées.
         """
         guild = self.get_guild(guild_id)
         posted = 0
@@ -480,7 +496,7 @@ class DraftBot(discord.Client):
             roles_by_id = {role.id: role for role in roles}
             # SHM met la plus récente en haut : on annonce de la plus ancienne à la plus récente.
             for key, trade in reversed(fresh):
-                if primed:
+                if primed and channel is not None:
                     await channel.send(capture.announcement(trade, roles_by_id, guild_emojis(guild)),
                                        allowed_mentions=PINGS)
                     posted += 1
@@ -492,7 +508,7 @@ class DraftBot(discord.Client):
                 self.store.set_shm_primed(guild_id)
         return posted
 
-    async def publish_waivers(self, guild_id: int, channel: discord.TextChannel, page: shm.WaiversPage,
+    async def publish_waivers(self, guild_id: int, channel: discord.TextChannel | None, page: shm.WaiversPage,
                               claims: dict[str, str], complete: bool) -> int:
         """Annonce les joueurs soumis au ballottage depuis la dernière lecture, puis ceux qui en sont
         sortis : réclamés (par qui) ou pas. Rend le nombre de messages envoyés.
@@ -504,7 +520,7 @@ class DraftBot(discord.Client):
         posted = 0
         async with self.locks[guild_id]:
             before = self.store.shm_waivers(guild_id)
-            if before is not None:
+            if before is not None and channel is not None:
                 old = {d["key"]: shm.ShmWaiver(**d) for d in before}
                 current = {waiver.key for waiver in page.waivers}
                 roles, emojis = team_roles(guild), guild_emojis(guild)
@@ -538,7 +554,7 @@ class DraftBot(discord.Client):
             self.store.set_shm_waivers(guild_id, [asdict(waiver) for waiver in page.waivers])
         return posted
 
-    async def publish_buyouts(self, guild_id: int, channel: discord.TextChannel, buyouts: list[shm.Buyout],
+    async def publish_buyouts(self, guild_id: int, channel: discord.TextChannel | None, buyouts: list[shm.Buyout],
                               teams: dict[str, str]) -> int:
         """Annonce les rachats de l'accueil pas encore annoncés, du plus ancien au plus récent.
 
@@ -552,7 +568,7 @@ class DraftBot(discord.Client):
                 key = shm.buyout_key(buyout)
                 if self.store.is_announced(guild_id, key):
                     continue
-                if primed:
+                if primed and channel is not None:
                     try:
                         await channel.send(moves.bought_out(buyout, teams, roles, emojis), allowed_mentions=NO_PINGS)
                     except discord.HTTPException:
@@ -566,9 +582,48 @@ class DraftBot(discord.Client):
                 self.store.set_shm_buyouts_primed(guild_id)
         return posted
 
-    async def shm_ok(self, guild_id: int, channel: discord.TextChannel) -> None:
+    async def publish_standings(self, guild_id: int, channel: discord.TextChannel, page: shm.StandingsPage) -> None:
+        """Publie le classement, puis modifie les mêmes messages quand il change (après une simulation)."""
+        guild = self.get_guild(guild_id)
+        chunks = moves.standings(page, guild_emojis(guild))
+        async with self.locks[guild_id]:
+            old_channel_id, old = self.store.standings_messages(guild_id)
+            if old_channel_id != channel.id:
+                # Nouveau salon : l'ancien classement est effacé, un nouveau est publié.
+                previous = guild.get_channel(old_channel_id) if old_channel_id else None
+                for message_id, _ in old if previous is not None else []:
+                    try:
+                        await delete_message(previous, message_id)
+                    except discord.HTTPException:
+                        pass
+                old = []
+            new = []
+            try:
+                for i, chunk in enumerate(chunks):
+                    if i < len(old):
+                        message_id, content = old[i]
+                        if content != chunk:
+                            try:
+                                await channel.get_partial_message(message_id).edit(content=chunk)
+                            except discord.NotFound:
+                                # Effacé à la main : tout est republié dans l'ordre à la prochaine lecture.
+                                for later_id, _ in old[i + 1:]:
+                                    await delete_message(channel, later_id)
+                                old = old[:i]
+                                message_id = (await channel.send(chunk, allowed_mentions=NO_PINGS)).id
+                        new.append((message_id, chunk))
+                    else:
+                        new.append(((await channel.send(chunk, allowed_mentions=NO_PINGS)).id, chunk))
+                for message_id, _ in old[len(chunks):]:
+                    await delete_message(channel, message_id)
+                old = []
+            finally:
+                # Même après une erreur, on garde la trace des messages publiés pour les modifier ensuite.
+                self.store.set_standings_messages(guild_id, channel.id, new + old[len(new):])
+
+    async def shm_ok(self, guild_id: int, channel: discord.TextChannel | None) -> None:
         status = self.shm_status[guild_id]
-        if status.warned:
+        if status.warned and channel is not None:
             try:
                 await channel.send("✅ Je lis de nouveau SHM : les annonces reprennent.", allowed_mentions=NO_PINGS)
             except discord.HTTPException:
@@ -1624,32 +1679,51 @@ SHM_NOT_CONFIGURED = (
 
 
 class ShmModal(BotModal):
-    def __init__(self, bot: DraftBot, slug: str | None, channel_id: int | None):
-        super().__init__(bot, "Transactions SHM automatiques")
+    def __init__(self, bot: DraftBot, guild_id: int):
+        super().__init__(bot, "Annonces SHM automatiques")
+        slug, channels = bot.store.shm_league(guild_id), bot.store.shm_channels(guild_id)
         self.address = self.ask(
             "Adresse de la ligue sur SHM",
             discord.ui.TextInput(default=f"{shm.BASE_URL}/{slug}" if slug else None, required=False,
                                  max_length=200, placeholder=f"{shm.BASE_URL}/ma_ligue"),
             "Copie l'adresse de ta ligue sur SHM. Laisse vide pour arrêter les annonces automatiques.")
-        default = [discord.Object(id=channel_id, type=discord.TextChannel)] if channel_id else []
-        self.channel = self.ask(
-            "Salon des annonces de transactions",
-            discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=default),
-            "Transactions, rachats et ballottage y seront publiés.")
+
+        def select(kind: str, required: bool) -> discord.ui.ChannelSelect:
+            channel_id = channels[kind]
+            default = [discord.Object(id=channel_id, type=discord.TextChannel)] if channel_id else []
+            return discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=default,
+                                            min_values=1 if required else 0, required=required)
+        self.channel = self.ask("Salon des transactions", select("trades", True),
+                                "Chaque nouvelle transaction y sera annoncée.")
+        self.waivers = self.ask("Salon du ballottage", select("waivers", False),
+                                "Laisse vide pour ne pas annoncer le ballottage.")
+        self.buyouts = self.ask("Salon des rachats", select("buyouts", False),
+                                "Laisse vide pour ne pas annoncer les rachats.")
+        self.standings = self.ask("Salon du classement", select("standings", False),
+                                  "Le classement y est publié et mis à jour tout seul. Laisse vide si tu n'en veux pas.")
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        channel = interaction.guild.get_channel(self.channel.values[0].id)
-        await setup_shm(self.bot, interaction, text_value(self.address), channel)
+        def chosen(select: discord.ui.ChannelSelect) -> discord.TextChannel | None | bool:
+            if not select.values:
+                return None
+            # False : un salon choisi que le bot ne voit pas.
+            return interaction.guild.get_channel(select.values[0].id) or False
+        await setup_shm(self.bot, interaction, text_value(self.address), chosen(self.channel),
+                        {"waivers": chosen(self.waivers), "buyouts": chosen(self.buyouts),
+                         "standings": chosen(self.standings)})
+
+
+SHM_KIND_NAMES = {"trades": "transactions", "waivers": "ballottage", "buyouts": "rachats", "standings": "classement"}
 
 
 async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: str,
-                    channel: discord.TextChannel | None) -> None:
+                    channel: discord.TextChannel | None, others: dict | None = None) -> None:
     guild = interaction.guild
     if not address.strip():
         bot.store.set_shm_league(guild.id, None)
         bot.shm_status.pop(guild.id, None)
         bot.store.add_log(guild.id, interaction.user.id, "transactions SHM", "arrêtées")
-        await reply(interaction, "🔕 Les transactions SHM ne sont plus annoncées automatiquement.")
+        await reply(interaction, "🔕 Les annonces SHM automatiques sont arrêtées.")
         await bot.refresh_panels(guild)
         return
     if bot.shm is None:
@@ -1660,13 +1734,17 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
     except shm.ShmError as error:
         await reply(interaction, f"❌ {error}")
         return
-    if channel is None:
-        await reply(interaction, "Salon introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
-        return
-    if not bot_can_post(channel, guild):
-        await reply(interaction, f"🔒 Le bot ne peut pas écrire dans {channel.mention}. Corrige ses permissions "
-                    "ou choisis un autre salon.")
-        return
+    others = others if others is not None else {"waivers": channel, "buyouts": channel, "standings": None}
+    chosen = {"trades": channel, **others}
+    for kind, target in chosen.items():
+        if target is False or (kind == "trades" and target is None):
+            await reply(interaction, f"Salon des {SHM_KIND_NAMES[kind]} introuvable. Le bot voit-il ce salon ? "
+                        "Réessaie dans `/admin`.")
+            return
+        if target is not None and not bot_can_post(target, guild):
+            await reply(interaction, f"🔒 Le bot ne peut pas écrire dans {target.mention} "
+                        f"({SHM_KIND_NAMES[kind]}). Corrige ses permissions ou choisis un autre salon.")
+            return
     await interaction.response.defer(ephemeral=True, thinking=True)
     # Un essai tout de suite : l'admin sait aussitôt si le compte du bot voit bien la ligue.
     try:
@@ -1674,21 +1752,31 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
     except shm.ShmError as error:
         await reply(interaction, f"❌ {error}\nRien n'a été changé.")
         return
-    # Le ballottage est retenu tout de suite aussi : seuls les nouveaux joueurs seront annoncés.
+    # Le ballottage et les rachats sont retenus tout de suite aussi : seuls les nouveaux seront annoncés.
     try:
         waivers = await bot.shm.waivers(slug)
     except shm.ShmError as error:
         log.warning("Ballottage SHM illisible pour la ligue %s : %s", slug, error)
         waivers = None
-    bot.store.set_trades_channel(guild.id, channel.id)
+    feed, _ = await bot.read_feed(slug)
+    standings, standings_error = None, None
+    if chosen["standings"] is not None:
+        try:
+            standings = await bot.shm.standings(slug)
+        except shm.ShmError as error:
+            standings_error = str(error)
+    bot.store.set_shm_channels(guild.id, channel.id, *(chosen[k].id if chosen[k] else None
+                                                       for k in ("waivers", "buyouts", "standings")))
     bot.store.set_shm_league(guild.id, slug)
     bot.store.add_log(guild.id, interaction.user.id, "transactions SHM", f"ligue {slug} → #{channel.name}")
     posted = await bot.publish_shm(guild.id, channel, page.trades, page.teams)
     if waivers is not None:
-        await bot.publish_waivers(guild.id, channel, waivers, {}, False)
-    feed, _ = await bot.read_feed(slug)
+        await bot.publish_waivers(guild.id, chosen["waivers"], waivers, {}, False)
     if feed is not None:
-        await bot.publish_buyouts(guild.id, channel, shm.feed_buyouts(feed, bot.shm_farms[slug]), page.teams)
+        await bot.publish_buyouts(guild.id, chosen["buyouts"], shm.feed_buyouts(feed, bot.shm_farms[slug]),
+                                  page.teams)
+    if standings is not None:
+        await bot.publish_standings(guild.id, chosen["standings"], standings)
     await bot.shm_ok(guild.id, channel)
     count = len(page.trades)
     lines = [f"✅ **C'est branché!** Le bot suit la ligue `{slug}` sur SHM."]
@@ -1697,9 +1785,13 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
                      f"annoncée{'s' if posted > 1 else ''} dans {channel.mention}.")
     elif count:
         lines.append(f"Les {count} transactions déjà sur SHM ne sont pas réannoncées.")
-    lines.append(f"Chaque nouvelle transaction, chaque rachat et chaque joueur soumis ou réclamé au ballottage "
-                 f"sera annoncé dans {channel.mention}, moins de {SHM_CHECK_MINUTES} minutes après être arrivé "
-                 "sur SHM.")
+    for kind in ("trades", "waivers", "buyouts", "standings"):
+        target = chosen[kind]
+        lines.append(f"• {SHM_KIND_NAMES[kind].capitalize()} : " + (target.mention if target else "pas annoncé"))
+    if standings_error:
+        lines.append(f"⚠️ Classement pas encore publié : {standings_error} Je réessaie tout seul.")
+    lines.append(f"Ce qui arrive sur SHM est annoncé moins de {SHM_CHECK_MINUTES} minutes plus tard. "
+                 "Ce qui y était déjà n'est pas réannoncé.")
     await reply(interaction, "\n".join(lines))
     await bot.refresh_panels(guild)
 
@@ -1708,16 +1800,18 @@ def shm_text(bot: DraftBot, guild: discord.Guild) -> str:
     slug = bot.store.shm_league(guild.id)
     if not slug:
         return "désactivées"
-    channel_id = bot.store.trades_channel(guild.id)
-    channel = guild.get_channel(channel_id) if channel_id else None
-    text = f"ligue `{slug}`" + (f" → {channel.mention}" if channel else "")
+    text = f"ligue `{slug}`"
     status = bot.shm_status.get(guild.id)
     if status and status.error:
         text += f"\n　⚠️ {status.error}"
     elif status and status.ok_at:
         minutes = int((time.time() - status.ok_at) // 60)
         text += " (✅ lu " + ("à l'instant" if minutes < 1 else f"il y a {minutes} min") + ")"
-    return text
+    parts = []
+    for kind, channel_id in bot.store.shm_channels(guild.id).items():
+        channel = guild.get_channel(channel_id) if channel_id else None
+        parts.append(f"{SHM_KIND_NAMES[kind].capitalize()} → " + (channel.mention if channel else "non"))
+    return text + "\n　" + " · ".join(parts)
 
 
 # Le panneau admin : un seul bouton pour la prochaine étape, le reste rangé dans « Plus d'options ».
@@ -1735,7 +1829,7 @@ LAUNCH_STEP = "Lancer le draft"
 MORE_OPTIONS = "Plus d'options"
 TRADE_BUTTON = "Annoncer une transaction"
 CHANGE_CHANNELS = "Changer les salons"
-SHM_BUTTON = "Transactions SHM auto"
+SHM_BUTTON = "Annonces SHM auto"
 
 
 def missing_setup_step(bot: DraftBot, guild: discord.Guild) -> int | None:
@@ -1794,7 +1888,7 @@ def panel_text(bot: DraftBot, guild: discord.Guild, more: bool = False) -> str:
             "• Ordre : " + (f"{picks} choix, {store.made_picks_count(guild.id)} déjà faits"
                             if picks else "pas encore défini"),
             f"• Délai : {delay_text(bot, guild)}",
-            f"• Transactions SHM automatiques : {shm_text(bot, guild)}",
+            f"• Annonces SHM automatiques : {shm_text(bot, guild)}",
             "",
             "Clique sur ce que tu veux faire, ou sur **Retour**.",
         ])
@@ -1971,8 +2065,7 @@ class AdminPanel(discord.ui.View):
         if self.bot.shm is None:
             await reply(interaction, SHM_NOT_CONFIGURED)
             return
-        await interaction.response.send_modal(ShmModal(self.bot, self.bot.store.shm_league(interaction.guild_id),
-                                                       self.bot.store.trades_channel(interaction.guild_id)))
+        await interaction.response.send_modal(ShmModal(self.bot, interaction.guild_id))
 
     async def open_capture(self, interaction: discord.Interaction) -> None:
         if not capture_installed():

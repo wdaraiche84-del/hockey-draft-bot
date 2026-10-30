@@ -75,7 +75,16 @@ CONFIG_COLUMNS = {
     "shm_waivers": "TEXT",
     # 1 quand les rachats déjà sur l'accueil SHM ont été retenus sans être annoncés.
     "shm_buyouts_primed": "INTEGER NOT NULL DEFAULT 0",
+    # Un salon par sorte d'annonce SHM. NULL : le salon des transactions (le classement : aucun). 0 : arrêtées.
+    "shm_waivers_channel_id": "INTEGER",
+    "shm_buyouts_channel_id": "INTEGER",
+    "shm_standings_channel_id": "INTEGER",
+    # Les messages du classement publiés : {"channel": id, "messages": [[id, texte], ...]} (JSON).
+    "shm_standings_messages": "TEXT",
 }
+
+# Les sortes d'annonces SHM, chacune dans son propre salon si on veut.
+SHM_KINDS = ("trades", "waivers", "buyouts", "standings")
 
 # Logos appris par serveur (corrections des admins) : assez pour toutes les équipes et leurs variantes.
 LEARNED_LOGOS_KEPT = 200
@@ -506,6 +515,45 @@ class Store:
         with self.db:
             self.db.execute("UPDATE config SET shm_waivers = ? WHERE guild_id = ?",
                             (json.dumps(waivers, ensure_ascii=False), guild_id))
+
+    def shm_channels(self, guild_id: int) -> dict[str, int | None]:
+        """Le salon de chaque sorte d'annonce SHM, ou None si elle est arrêtée."""
+        row = self.db.execute(
+            "SELECT trades_channel_id, shm_waivers_channel_id, shm_buyouts_channel_id, shm_standings_channel_id "
+            "FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        trades, waivers, buyouts, standings = row if row else (None, None, None, None)
+        return {"trades": trades or None,
+                "waivers": trades if waivers is None else waivers or None,
+                "buyouts": trades if buyouts is None else buyouts or None,
+                "standings": standings or None}
+
+    def set_shm_channels(self, guild_id: int, trades: int, waivers: int | None, buyouts: int | None,
+                         standings: int | None) -> None:
+        """Les salons des annonces SHM. None arrête cette sorte d'annonce."""
+        with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, trades_channel_id, shm_waivers_channel_id, shm_buyouts_channel_id, "
+                "shm_standings_channel_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT (guild_id) DO UPDATE SET "
+                "trades_channel_id = excluded.trades_channel_id, "
+                "shm_waivers_channel_id = excluded.shm_waivers_channel_id, "
+                "shm_buyouts_channel_id = excluded.shm_buyouts_channel_id, "
+                "shm_standings_channel_id = excluded.shm_standings_channel_id",
+                (guild_id, trades, waivers or 0, buyouts or 0, standings or 0),
+            )
+
+    def standings_messages(self, guild_id: int) -> tuple[int | None, list[tuple[int, str]]]:
+        """(salon, [(message, texte)]) du classement publié."""
+        row = self.db.execute("SELECT shm_standings_messages FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        if not row or not row[0]:
+            return None, []
+        data = json.loads(row[0])
+        return data["channel"], [(m[0], m[1]) for m in data["messages"]]
+
+    def set_standings_messages(self, guild_id: int, channel_id: int | None, messages: list[tuple[int, str]]) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_standings_messages = ? WHERE guild_id = ?",
+                            (json.dumps({"channel": channel_id, "messages": messages}, ensure_ascii=False),
+                             guild_id))
 
     def shm_buyouts_primed(self, guild_id: int) -> bool:
         row = self.db.execute("SELECT shm_buyouts_primed FROM config WHERE guild_id = ?", (guild_id,)).fetchone()

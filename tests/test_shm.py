@@ -14,6 +14,7 @@ LOGIN = (FIXTURES / "shm_connexion.html").read_text(encoding="utf-8")
 WAIVERS = (FIXTURES / "shm_ballottage.html").read_text(encoding="utf-8")
 HOME = (FIXTURES / "shm_accueil.html").read_text(encoding="utf-8")
 ROSTER = (FIXTURES / "shm_effectifs.html").read_text(encoding="utf-8")
+STANDINGS = (FIXTURES / "shm_classement.html").read_text(encoding="utf-8")
 
 
 def items(side):
@@ -147,6 +148,37 @@ def test_roster_page_gives_the_farm_club():
                           "ARI") is None
     with pytest.raises(shm.LoginNeeded):
         shm.parse_farm(LOGIN, "ARI")
+
+
+def test_standings_are_read_by_division():
+    page = shm.parse_standings(STANDINGS)
+    assert [title for title, _ in page.groups] == [
+        "Division Atlantique", "Division Nord-Est", "Division Sud-Est",
+        "Division Pacifique", "Division Centrale", "Division Nord-Ouest"]
+    assert [row.team for row in page.groups[3][1]] == ["ARI", "SJ", "ANA", "DAL", "LAK"]
+    assert page.groups[3][1][0] == shm.Standing("1", "ARI", "0", "0", "0", "0", "0")
+    assert sum(len(rows) for _, rows in page.groups) == 30
+    assert page.teams["ARI"] == "Arizona Coyotes" and len(page.teams) == 30
+
+
+def test_standings_without_divisions_use_the_conferences_or_the_league():
+    def table(code):
+        return (f'<table><tbody><tr><td data-column="position">1</td><td><a href="/x/rosters/{code}"></a></td>'
+                f'<td data-column="pts">5</td></tr></tbody></table>')
+    html = (f'<div class="tab-pane" id="NHL">{table("MTL")}</div><div class="tab-pane" id="EST">{table("MTL")}</div>'
+            f'<div class="tab-pane" id="AHL">{table("LAV")}</div>')
+    page = shm.parse_standings(html)
+    assert [(title, [r.team for r in rows]) for title, rows in page.groups] == [("Association Est", ["MTL"])]
+    league = shm.parse_standings(f'<div class="tab-pane" id="NHL">{table("MTL")}</div>')
+    assert league.groups[0][0] == "Classement de la ligue"
+    with pytest.raises(shm.ShmError):
+        shm.parse_standings("<html><body>Rien</body></html>")
+
+
+def test_my_team_link_is_not_a_team_name():
+    teams, _ = shm.page_teams(shm.BeautifulSoup(
+        '<a href="/x/rosters/ARI">Mon équipe</a><a href="/x/rosters/ARI">Arizona Coyotes</a>', "html.parser"))
+    assert teams == {"ARI": "Arizona Coyotes"}
 
 
 def test_home_page_tells_whether_something_could_have_been_missed():
