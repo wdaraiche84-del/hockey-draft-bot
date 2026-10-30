@@ -2,6 +2,7 @@
 
 import asyncio
 import itertools
+from dataclasses import replace
 
 import discord
 import pytest
@@ -2101,22 +2102,32 @@ def test_standings_are_posted_then_edited_after_each_simulation(shm_league):
     ari = FakeEmoji("ARI")
     guild.emojis = [ari]
 
+    def west():
+        return site.standings_page.groups[1][1]
+
     async def scenario():
         i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", standings=standings)
         first = list(standings.texts())
         await bot.check_shm()
         unchanged = list(standings.texts())
-        site.set_points("ARI", 4, 2)
+        # Simulation : Arizona (1er) recule au 3e rang, San Jose et Edmonton montent.
+        rows = west()
+        rows[0], rows[1], rows[2] = rows[1], rows[2], replace(rows[0], points="2", games="1")
         await bot.check_shm()
-        return i.last, first, unchanged
-    text, first, unchanged = run(scenario())
+        after_sim = list(standings.texts())
+        await bot.check_shm()
+        return i.last, first, unchanged, after_sim
+    text, first, unchanged, after_sim = run(scenario())
     assert "Classement : #classement" in text
     assert len(first) == 1 and first == unchanged
     assert first[0].startswith("📊 **Classement**")
-    assert "**Division Pacifique**\n` 1.` " + str(ari) + " Arizona Coyotes — **0 pt** · 0 PJ · 0-0-0" in first[0]
-    # Le même message est modifié, pas un nouveau.
-    assert len(standings.texts()) == 1
-    assert f"{ari} Arizona Coyotes — **4 pts** · 2 PJ" in standings.texts()[0]
+    assert "**Association de l'Ouest**\n` 1.` " + str(ari) + " Arizona Coyotes — **0 pt** · 0 PJ · 0-0-0\n" in first[0]
+    assert "▲" not in first[0].split("\n", 2)[2]
+    # Le même message est modifié, pas un nouveau, avec une flèche pour qui a bougé.
+    assert len(after_sim) == 1 and standings.texts() == after_sim
+    lines = after_sim[0].splitlines()
+    assert f"` 3.` {ari} Arizona Coyotes — **2 pts** · 1 PJ · 0-0-0 🔴 ▼2" in lines
+    assert any(line.startswith("` 1.`") and line.endswith("🟢 ▲1") for line in lines)
     assert channel.texts() == []
 
 
@@ -2134,7 +2145,7 @@ def test_standings_deleted_by_hand_are_posted_again_and_moved_with_the_channel(s
         await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", standings=second)
         return reposted
     reposted = run(scenario())
-    assert len(reposted) == 1 and "**2 pts**" in reposted[0]
+    assert len(reposted) == 1 and "Arizona Coyotes — **2 pts**" in reposted[0]
     # Nouveau salon : l'ancien classement est effacé.
     assert first.texts() == [] and len(second.texts()) == 1
 

@@ -81,6 +81,8 @@ CONFIG_COLUMNS = {
     "shm_standings_channel_id": "INTEGER",
     # Les messages du classement publiés : {"channel": id, "messages": [[id, texte], ...]} (JSON).
     "shm_standings_messages": "TEXT",
+    # Le dernier classement lu, les rangs et les places gagnées ou perdues à la dernière simulation (JSON).
+    "shm_standings_state": "TEXT",
 }
 
 # Les sortes d'annonces SHM, chacune dans son propre salon si on veut.
@@ -554,6 +556,15 @@ class Store:
             self.db.execute("UPDATE config SET shm_standings_messages = ? WHERE guild_id = ?",
                             (json.dumps({"channel": channel_id, "messages": messages}, ensure_ascii=False),
                              guild_id))
+
+    def standings_state(self, guild_id: int) -> dict | None:
+        row = self.db.execute("SELECT shm_standings_state FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return json.loads(row[0]) if row and row[0] else None
+
+    def set_standings_state(self, guild_id: int, state: dict) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_standings_state = ? WHERE guild_id = ?",
+                            (json.dumps(state, ensure_ascii=False), guild_id))
 
     def shm_buyouts_primed(self, guild_id: int) -> bool:
         row = self.db.execute("SELECT shm_buyouts_primed FROM config WHERE guild_id = ?", (guild_id,)).fetchone()

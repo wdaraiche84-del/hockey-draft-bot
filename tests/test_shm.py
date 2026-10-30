@@ -150,25 +150,25 @@ def test_roster_page_gives_the_farm_club():
         shm.parse_farm(LOGIN, "ARI")
 
 
-def test_standings_are_read_by_division():
+def test_standings_are_read_by_conference():
     page = shm.parse_standings(STANDINGS)
-    assert [title for title, _ in page.groups] == [
-        "Division Atlantique", "Division Nord-Est", "Division Sud-Est",
-        "Division Pacifique", "Division Centrale", "Division Nord-Ouest"]
-    assert [row.team for row in page.groups[3][1]] == ["ARI", "SJ", "ANA", "DAL", "LAK"]
-    assert page.groups[3][1][0] == shm.Standing("1", "ARI", "0", "0", "0", "0", "0")
-    assert sum(len(rows) for _, rows in page.groups) == 30
+    assert [title for title, _ in page.groups] == ["Association de l'Est", "Association de l'Ouest"]
+    assert [len(rows) for _, rows in page.groups] == [15, 15]
+    assert page.groups[1][1][0] == shm.Standing("1", "ARI", "0", "0", "0", "0", "0")
     assert page.teams["ARI"] == "Arizona Coyotes" and len(page.teams) == 30
 
 
-def test_standings_without_divisions_use_the_conferences_or_the_league():
+def test_standings_without_conferences_use_the_divisions_or_the_league():
     def table(code):
         return (f'<table><tbody><tr><td data-column="position">1</td><td><a href="/x/rosters/{code}"></a></td>'
                 f'<td data-column="pts">5</td></tr></tbody></table>')
     html = (f'<div class="tab-pane" id="NHL">{table("MTL")}</div><div class="tab-pane" id="EST">{table("MTL")}</div>'
             f'<div class="tab-pane" id="AHL">{table("LAV")}</div>')
     page = shm.parse_standings(html)
-    assert [(title, [r.team for r in rows]) for title, rows in page.groups] == [("Association Est", ["MTL"])]
+    assert [(title, [r.team for r in rows]) for title, rows in page.groups] == [("Association de l'Est", ["MTL"])]
+    divisions = shm.parse_standings(f'<div class="tab-pane" id="NHL">{table("MTL")}</div><div class="tab-pane" '
+                                    f'id="X"><div><h3>Division Nord-Est</h3>{table("MTL")}</div></div>')
+    assert [title for title, _ in divisions.groups] == ["Division Nord-Est"]
     league = shm.parse_standings(f'<div class="tab-pane" id="NHL">{table("MTL")}</div>')
     assert league.groups[0][0] == "Classement de la ligue"
     with pytest.raises(shm.ShmError):

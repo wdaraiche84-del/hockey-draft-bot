@@ -82,27 +82,44 @@ def bought_out(buyout: shm.Buyout, teams: dict[str, str], roles: list, emojis: d
 
 # Le classement : quelques messages que le bot modifie après chaque simulation.
 
-STANDINGS_TITLE = "📊 **Classement**\n-# PJ : parties jouées · V-D-DP : victoires, défaites, défaites en prolongation"
+STANDINGS_TITLE = ("📊 **Classement**\n-# PJ : parties jouées · V-D-DP : victoires, défaites, défaites en prolongation"
+                   " · 🟢 ▲ / 🔴 ▼ : places gagnées ou perdues depuis la dernière simulation")
 STANDINGS_FOOTER = "-# Mis à jour tout seul par le bot après chaque simulation sur SHM."
 MESSAGE_LIMIT = 1900
 
 
-def standing_line(rank: int, row: shm.Standing, teams: dict[str, str], emojis: dict[str, str]) -> str:
+def standing_line(rank: int, row: shm.Standing, teams: dict[str, str], emojis: dict[str, str],
+                  moved: int = 0) -> str:
     name = teams.get(row.team)
     team = shm.known_team(row.team, name)
     name = name or (capture.TEAM_NAMES.get(team) if team else None) or row.team
     points = row.points or "0"
+    arrow = f" 🟢 ▲{moved}" if moved > 0 else f" 🔴 ▼{-moved}" if moved < 0 else ""
     return (f"`{rank:>2}.` {capture.emoji_prefix(team, emojis)}{escape_markdown(name)} — "
             f"**{points} pt{'s' if points not in ('0', '1') else ''}** · {row.games or 0} PJ · "
-            f"{row.wins or 0}-{row.losses or 0}-{row.otl or 0}")
+            f"{row.wins or 0}-{row.losses or 0}-{row.otl or 0}{arrow}")
 
 
-def standings(page: shm.StandingsPage, emojis: dict[str, str]) -> list[str]:
-    """Le classement en messages de moins de 2000 caractères, une division ne coupant jamais en deux."""
+def standing_ranks(page: shm.StandingsPage) -> dict[str, int]:
+    """Le rang de chaque équipe dans son groupe (association ou division)."""
+    return {row.team: rank for _, rows in page.groups for rank, row in enumerate(rows, 1)}
+
+
+def standing_moves(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:
+    """Les places gagnées (positif) ou perdues (négatif) par chaque équipe qui a bougé."""
+    return {team: before[team] - rank for team, rank in after.items() if team in before and before[team] != rank}
+
+
+def standings(page: shm.StandingsPage, emojis: dict[str, str], moves: dict[str, int] | None = None) -> list[str]:
+    """Le classement en messages de moins de 2000 caractères, un groupe ne coupant jamais en deux.
+
+    `moves` : les places gagnées ou perdues depuis la simulation d'avant (flèche verte ou rouge)."""
+    moves = moves or {}
     sections = [STANDINGS_TITLE]
     for title, rows in page.groups:
         lines = [f"**{escape_markdown(title)}**"]
-        lines += [standing_line(rank, row, page.teams, emojis) for rank, row in enumerate(rows, 1)]
+        lines += [standing_line(rank, row, page.teams, emojis, moves.get(row.team, 0))
+                  for rank, row in enumerate(rows, 1)]
         sections.append("\n".join(lines))
     sections.append(STANDINGS_FOOTER)
     messages = [""]

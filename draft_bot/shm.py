@@ -463,8 +463,13 @@ def standing_rows(table) -> list[Standing]:
     return rows
 
 
+CONFERENCES = {"EST": "Association de l'Est", "OUEST": "Association de l'Ouest",
+               "EAST": "Association de l'Est", "WEST": "Association de l'Ouest"}
+
+
 def parse_standings(html: str) -> StandingsPage:
-    """Le classement de la ligue : par division si SHM en a, sinon par association, sinon la ligue entière.
+    """Le classement de la ligue : par association (Est, Ouest) si SHM en a, sinon par division, sinon la
+    ligue entière.
 
     La page a un onglet par vue : NHL (toute la ligue), une par association (avec ses divisions
     sous un titre) et AHL. L'onglet AHL est ignoré.
@@ -488,8 +493,8 @@ def parse_standings(html: str) -> StandingsPage:
         elif pane_id.upper() in ("NHL", "LNH", ""):
             league.append(("Classement de la ligue", rows))
         else:
-            conferences.append((f"Association {pane_id.capitalize()}", rows))
-    groups = divisions or conferences or league
+            conferences.append((CONFERENCES.get(pane_id.upper(), f"Association {pane_id.capitalize()}"), rows))
+    groups = conferences or divisions or league
     if not groups:
         raise ShmError("Je ne trouve pas le classement sur SHM. Le compte SHM du bot est-il bien membre de "
                        "cette ligue ?")

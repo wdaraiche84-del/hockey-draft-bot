@@ -585,8 +585,17 @@ class DraftBot(discord.Client):
     async def publish_standings(self, guild_id: int, channel: discord.TextChannel, page: shm.StandingsPage) -> None:
         """Publie le classement, puis modifie les mêmes messages quand il change (après une simulation)."""
         guild = self.get_guild(guild_id)
-        chunks = moves.standings(page, guild_emojis(guild))
         async with self.locks[guild_id]:
+            # Les flèches restent jusqu'à la simulation suivante : elles ne changent que si le classement change.
+            rows = [[title, [list(asdict(row).values()) for row in group]] for title, group in page.groups]
+            state = self.store.standings_state(guild_id)
+            ranks = moves.standing_ranks(page)
+            if state is None:
+                state = {"rows": rows, "ranks": ranks, "moves": {}}
+            elif state["rows"] != rows:
+                state = {"rows": rows, "ranks": ranks, "moves": moves.standing_moves(state["ranks"], ranks)}
+            self.store.set_standings_state(guild_id, state)
+            chunks = moves.standings(page, guild_emojis(guild), state["moves"])
             old_channel_id, old = self.store.standings_messages(guild_id)
             if old_channel_id != channel.id:
                 # Nouveau salon : l'ancien classement est effacé, un nouveau est publié.
@@ -1784,7 +1793,8 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
         lines.append(f"{posted} nouvelle{'s' if posted > 1 else ''} transaction{'s' if posted > 1 else ''} "
                      f"annoncée{'s' if posted > 1 else ''} dans {channel.mention}.")
     elif count:
-        lines.append(f"Les {count} transactions déjà sur SHM ne sont pas réannoncées.")
+        lines.append("La transaction déjà sur SHM n'est pas réannoncée." if count == 1 else
+                     f"Les {count} transactions déjà sur SHM ne sont pas réannoncées.")
     for kind in ("trades", "waivers", "buyouts", "standings"):
         target = chosen[kind]
         lines.append(f"• {SHM_KIND_NAMES[kind].capitalize()} : " + (target.mention if target else "pas annoncé"))
