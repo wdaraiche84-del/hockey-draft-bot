@@ -586,14 +586,15 @@ class DraftBot(discord.Client):
         """Publie le classement, puis modifie les mêmes messages quand il change (après une simulation)."""
         guild = self.get_guild(guild_id)
         async with self.locks[guild_id]:
-            # Les flèches restent jusqu'à la simulation suivante : elles ne changent que si le classement change.
-            rows = [[title, [list(asdict(row).values()) for row in group]] for title, group in page.groups]
+            # Les flèches ne changent qu'après une vraie simulation (des parties jouées en plus). SHM peut
+            # montrer des équipes à égalité dans un autre ordre d'une fois à l'autre : ce n'est pas un mouvement.
+            games = moves.games_played(page)
             state = self.store.standings_state(guild_id)
             ranks = moves.standing_ranks(page)
-            if state is None:
-                state = {"rows": rows, "ranks": ranks, "moves": {}}
-            elif state["rows"] != rows:
-                state = {"rows": rows, "ranks": ranks, "moves": moves.standing_moves(state["ranks"], ranks)}
+            if state is None or "games" not in state:
+                state = {"games": games, "ranks": ranks, "moves": {}}
+            elif games != state["games"]:
+                state = {"games": games, "ranks": ranks, "moves": moves.standing_moves(state["ranks"], ranks)}
             self.store.set_standings_state(guild_id, state)
             chunks = moves.standings(page, guild_emojis(guild), state["moves"])
             old_channel_id, old = self.store.standings_messages(guild_id)

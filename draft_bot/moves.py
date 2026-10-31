@@ -105,6 +105,15 @@ def standing_ranks(page: shm.StandingsPage) -> dict[str, int]:
     return {row.team: rank for _, rows in page.groups for rank, row in enumerate(rows, 1)}
 
 
+def games_played(page: shm.StandingsPage) -> int:
+    """Le total des parties jouées : il augmente seulement quand SHM simule des matchs."""
+    total = 0
+    for _, rows in page.groups:
+        for row in rows:
+            total += int(row.games) if row.games.isdigit() else 0
+    return total
+
+
 def standing_moves(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:
     """Les places gagnées (positif) ou perdues (négatif) par chaque équipe qui a bougé."""
     return {team: before[team] - rank for team, rank in after.items() if team in before and before[team] != rank}
