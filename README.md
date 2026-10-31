@@ -91,7 +91,7 @@ Le bot peut aussi publier le **classement** de la ligue (Association de l'Est et
 
 **Plus d'options** montre l'état : la ligue suivie, le salon de chaque annonce et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
 
-Le bot demande au plus une page SHM toutes les 2 secondes (d’habitude 3 pages par ligue toutes les 5 minutes), et une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Si SHM refuse le mot de passe, le bot n'insiste pas (nouvel essai après 30 minutes), pour ne pas faire bloquer le compte.
+Le bot se présente à SHM dans chaque requête (en-têtes `User-Agent` et `X-Bot` : nom, version et compte SHM du bot), pour que les admins de SHM le reconnaissent. Il demande au plus une page SHM toutes les 2 secondes (d’habitude 3 pages par ligue toutes les 5 minutes), et une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Si SHM refuse le mot de passe, le bot n'insiste pas (nouvel essai après 30 minutes), pour ne pas faire bloquer le compte.
 
 ### Fichier des joueurs
 

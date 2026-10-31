@@ -26,8 +26,17 @@ from .storage import normalize
 log = logging.getLogger("draft_bot.shm")
 
 BASE_URL = "https://simulatedhockeymanager.ca"
-# Le bot se présente honnêtement : les admins de SHM savent qui visite leurs pages.
-USER_AGENT = "HockeySimsTools/1.0 (bot Discord des ligues SHM)"
+# Le bot se présente honnêtement : les admins de SHM savent qui visite leurs pages. Chaque requête
+# dit le nom du bot, sa version et le compte SHM qu'il utilise, dans User-Agent et dans X-Bot.
+BOT_NAME = "HockeySimsTools"
+BOT_VERSION = "1.1"
+
+
+def bot_headers(username: str) -> dict[str, str]:
+    """Les en-têtes qui identifient le bot auprès de SHM (en ASCII seulement, comme l'exige HTTP)."""
+    username = "".join(c if 32 <= ord(c) < 127 else "?" for c in username)
+    return {"User-Agent": f"{BOT_NAME}/{BOT_VERSION} (bot Discord des ligues SHM; compte SHM : {username})",
+            "X-Bot": f"{BOT_NAME}; compte={username}"}
 # Au plus une page SHM toutes les 2 secondes, toutes ligues confondues : très peu de trafic.
 SECONDS_BETWEEN_REQUESTS = 2.0
 REQUEST_SECONDS = 30
@@ -530,7 +539,7 @@ class ShmClient:
     def _session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
-                headers={"User-Agent": USER_AGENT, "Accept-Language": "fr"},
+                headers={**bot_headers(self.username), "Accept-Language": "fr"},
                 timeout=aiohttp.ClientTimeout(total=REQUEST_SECONDS),
                 # unsafe : accepte aussi les témoins d'une adresse IP (le faux SHM des tests).
                 cookie_jar=aiohttp.CookieJar(unsafe=True))
