@@ -1821,9 +1821,14 @@ def test_shm_button_explains_when_the_bot_has_no_shm_account(league):
 def test_shm_account_comes_from_env():
     assert bot_module.shm_client_from_env({}) is None
     client = bot_module.shm_client_from_env({"SHM_USERNAME": " HockeySimsTools ", "SHM_PASSWORD": "secret"})
-    assert client.username == "HockeySimsTools" and client.password == "secret"
+    assert client.username == "HockeySimsTools" and client.password == "secret" and client.key == ""
     with pytest.raises(bot_module.ConfigError):
         bot_module.shm_client_from_env({"SHM_USERNAME": "HockeySimsTools"})
+    # La clé convenue avec les admins de SHM, pour passer Cloudflare.
+    keyed = bot_module.shm_client_from_env({"SHM_USERNAME": "a", "SHM_PASSWORD": "b", "SHM_BOT_KEY": " k3y-Xy9 "})
+    assert keyed.key == "k3y-Xy9"
+    with pytest.raises(bot_module.ConfigError):
+        bot_module.shm_client_from_env({"SHM_USERNAME": "a", "SHM_PASSWORD": "b", "SHM_BOT_KEY": "clé secrète"})
 
 
 # Les emotes d'équipe

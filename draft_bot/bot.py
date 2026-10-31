@@ -2253,7 +2253,11 @@ def shm_client_from_env(env: dict) -> shm.ShmClient | None:
     if not username or not password:
         raise ConfigError("Il faut SHM_USERNAME et SHM_PASSWORD ensemble dans .env (le compte SHM du bot), "
                           "ou aucun des deux.")
-    return shm.ShmClient(username, password)
+    key = (env.get("SHM_BOT_KEY") or "").strip()
+    if key and not all(33 <= ord(c) < 127 for c in key):
+        raise ConfigError("SHM_BOT_KEY ne doit contenir que des lettres, des chiffres et des signes simples, "
+                          "sans espace ni accent.")
+    return shm.ShmClient(username, password, key=key)
 
 
 def main() -> None:

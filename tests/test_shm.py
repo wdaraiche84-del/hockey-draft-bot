@@ -308,6 +308,13 @@ def test_client_logs_in_once_then_reads_pages(fake_shm):
         "HockeySimsTools; compte=HockeySimsTools")}
 
 
+def test_secret_key_is_sent_only_when_set():
+    assert "X-Bot-Key" not in shm.bot_headers("HockeySimsTools")
+    assert shm.bot_headers("HockeySimsTools", "k3y")["X-Bot-Key"] == "k3y"
+    # Un nom de compte avec un accent ne casse pas les en-têtes (HTTP n'accepte que l'ASCII).
+    assert shm.bot_headers("Équipe")["X-Bot"] == "HockeySimsTools; compte=?quipe"
+
+
 def test_client_reads_the_waivers_and_home_pages_with_the_same_login(fake_shm):
     async def scenario(client):
         await client.history("lnhs_2")

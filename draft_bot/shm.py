@@ -32,11 +32,18 @@ BOT_NAME = "HockeySimsTools"
 BOT_VERSION = "1.1"
 
 
-def bot_headers(username: str) -> dict[str, str]:
-    """Les en-têtes qui identifient le bot auprès de SHM (en ASCII seulement, comme l'exige HTTP)."""
+def bot_headers(username: str, key: str = "") -> dict[str, str]:
+    """Les en-têtes qui identifient le bot auprès de SHM (en ASCII seulement, comme l'exige HTTP).
+
+    `key` : une clé secrète convenue avec les admins de SHM (SHM_BOT_KEY). Envoyée dans X-Bot-Key,
+    elle leur permet de laisser passer le bot dans Cloudflare : contrairement au User-Agent,
+    personne d'autre ne la connaît."""
     username = "".join(c if 32 <= ord(c) < 127 else "?" for c in username)
-    return {"User-Agent": f"{BOT_NAME}/{BOT_VERSION} (bot Discord des ligues SHM; compte SHM : {username})",
-            "X-Bot": f"{BOT_NAME}; compte={username}"}
+    headers = {"User-Agent": f"{BOT_NAME}/{BOT_VERSION} (bot Discord des ligues SHM; compte SHM : {username})",
+               "X-Bot": f"{BOT_NAME}; compte={username}"}
+    if key:
+        headers["X-Bot-Key"] = key
+    return headers
 # Au plus une page SHM toutes les 2 secondes, toutes ligues confondues : très peu de trafic.
 SECONDS_BETWEEN_REQUESTS = 2.0
 REQUEST_SECONDS = 30
@@ -522,8 +529,8 @@ def feed_follows(previous: list[FeedRow], current: list[FeedRow]) -> bool:
 class ShmClient:
     """Une connexion à SHM avec le compte du bot. Une seule page demandée à la fois."""
 
-    def __init__(self, username: str, password: str, base_url: str = BASE_URL):
-        self.username, self.password, self.base_url = username, password, base_url
+    def __init__(self, username: str, password: str, base_url: str = BASE_URL, key: str = ""):
+        self.username, self.password, self.base_url, self.key = username, password, base_url, key
         self.session: aiohttp.ClientSession | None = None
         self.lock = asyncio.Lock()
         self.last_request = 0.0
@@ -539,7 +546,7 @@ class ShmClient:
     def _session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
-                headers={**bot_headers(self.username), "Accept-Language": "fr"},
+                headers={**bot_headers(self.username, self.key), "Accept-Language": "fr"},
                 timeout=aiohttp.ClientTimeout(total=REQUEST_SECONDS),
                 # unsafe : accepte aussi les témoins d'une adresse IP (le faux SHM des tests).
                 cookie_jar=aiohttp.CookieJar(unsafe=True))
