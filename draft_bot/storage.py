@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS announced_trades (
     at REAL NOT NULL,
     PRIMARY KEY (guild_id, fingerprint)
 );
+CREATE TABLE IF NOT EXISTS shm_feeds (
+    league TEXT PRIMARY KEY,
+    rows TEXT NOT NULL
+);
 """
 
 # Colonnes ajoutées après la première version : une base existante les reçoit au démarrage.
@@ -565,6 +569,19 @@ class Store:
         with self.db:
             self.db.execute("UPDATE config SET shm_standings_state = ? WHERE guild_id = ?",
                             (json.dumps(state, ensure_ascii=False), guild_id))
+
+    def shm_feed(self, league: str) -> list[list[str]]:
+        """Les « Changements par équipe » lus la dernière fois dans cette ligue : gardés après un redémarrage."""
+        row = self.db.execute("SELECT rows FROM shm_feeds WHERE league = ?", (league,)).fetchone()
+        return json.loads(row[0]) if row else []
+
+    def set_shm_feed(self, league: str, rows: list[list[str]] | None) -> None:
+        with self.db:
+            if rows is None:
+                self.db.execute("DELETE FROM shm_feeds WHERE league = ?", (league,))
+            else:
+                self.db.execute("INSERT OR REPLACE INTO shm_feeds VALUES (?, ?)",
+                                (league, json.dumps(rows, ensure_ascii=False)))
 
     def shm_buyouts_primed(self, guild_id: int) -> bool:
         row = self.db.execute("SELECT shm_buyouts_primed FROM config WHERE guild_id = ?", (guild_id,)).fetchone()

@@ -80,8 +80,6 @@ class DraftBot(discord.Client):
         # Le compte SHM du bot, ou None s'il n'est pas configuré (SHM_USERNAME et SHM_PASSWORD).
         self.shm = shm_client
         self.shm_status: defaultdict[int, ShmStatus] = defaultdict(ShmStatus)
-        # Les « Changements par équipe » lus la dernière fois, par ligue : pour savoir si rien n'a été manqué.
-        self.shm_feeds: dict[str, list[shm.FeedRow]] = {}
         # Club-école -> équipe LNH, appris sur l'accueil ou les pages « Effectifs » de chaque ligue.
         self.shm_farms: defaultdict[str, dict[str, str]] = defaultdict(dict)
         # Les pages « Effectifs » déjà lues pour trouver un club-école, par ligue.
@@ -437,10 +435,12 @@ class DraftBot(discord.Client):
             feed = await self.shm.feed(slug)
         except shm.ShmError as error:
             log.warning("Accueil SHM illisible pour la ligue %s : %s", slug, error)
-            self.shm_feeds.pop(slug, None)
+            self.store.set_shm_feed(slug, None)
             return None, False
-        complete = shm.feed_follows(self.shm_feeds.get(slug, []), feed)
-        self.shm_feeds[slug] = feed
+        # Gardé dans la base : après un redémarrage du bot, on sait encore si rien n'a été manqué.
+        before = [shm.FeedRow(*row) for row in self.store.shm_feed(slug)]
+        complete = shm.feed_follows(before, feed)
+        self.store.set_shm_feed(slug, [[row.team, row.action, row.text] for row in feed])
         return feed, complete
 
     @check_shm.before_loop

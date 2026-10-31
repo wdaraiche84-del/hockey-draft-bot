@@ -1946,6 +1946,21 @@ def test_unclaimed_waiver_is_announced_only_when_nothing_was_missed(shm_league):
     assert channel.texts() == sure
 
 
+def test_unclaimed_waiver_is_still_announced_after_a_restart(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        # Le bot est éteint pendant que le ballottage se termine, puis redémarre.
+        site.end_waiver("Kevin Lankinen")
+        restarted = DraftBot(store, backup_dir=None, shm_client=site)
+        restarted.get_guild = bot.get_guild
+        await restarted.check_shm()
+    run(scenario())
+    assert len(channel.texts()) == 1 and "personne n'a réclamé **Kevin Lankinen**" in channel.texts()[0]
+
+
 def test_waivers_and_trades_do_not_block_each_other(shm_league):
     bot, store, guild, admin, channel, roles, site = shm_league
 
