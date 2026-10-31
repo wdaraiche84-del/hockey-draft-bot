@@ -1,2 +1,8 @@
 discord.py>=2.7
 python-dotenv>=1.0
+# Lecture de l'historique des transactions sur le site SHM.
+beautifulsoup4>=4.12
+# Lecture gratuite des captures de transactions SHM, directement sur l'ordinateur du bot.
+# Avec un Python plus vieux que 3.11, le bot marche quand même : seul ce bouton sera indisponible.
+rapidocr==3.10.0; python_version >= "3.11"
+onnxruntime==1.29.0; python_version >= "3.11"

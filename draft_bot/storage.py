@@ -1,5 +1,6 @@
 """Stockage SQLite de l'état du draft. Un seul draft par serveur Discord."""
 
+import json
 import sqlite3
 import time
 import unicodedata
@@ -44,6 +45,22 @@ CREATE TABLE IF NOT EXISTS list_messages (
     content TEXT NOT NULL,
     PRIMARY KEY (guild_id, position)
 );
+CREATE TABLE IF NOT EXISTS trade_logos (
+    guild_id INTEGER NOT NULL,
+    role_id INTEGER NOT NULL,
+    descriptor BLOB NOT NULL,
+    at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS announced_trades (
+    guild_id INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    at REAL NOT NULL,
+    PRIMARY KEY (guild_id, fingerprint)
+);
+CREATE TABLE IF NOT EXISTS shm_feeds (
+    league TEXT PRIMARY KEY,
+    rows TEXT NOT NULL
+);
 """
 
 # Colonnes ajoutées après la première version : une base existante les reçoit au démarrage.
@@ -54,7 +71,29 @@ CONFIG_COLUMNS = {
     "clock_started": "REAL",
     "clock_alerted": "INTEGER NOT NULL DEFAULT 0",
     "button_message_id": "INTEGER",
+    "started": "INTEGER NOT NULL DEFAULT 0",
+    "trades_channel_id": "INTEGER",
+    "shm_league": "TEXT",
+    "shm_primed": "INTEGER NOT NULL DEFAULT 0",
+    # Les joueurs au ballottage lors de la dernière lecture SHM (JSON), ou NULL avant la première.
+    "shm_waivers": "TEXT",
+    # 1 quand les rachats déjà sur l'accueil SHM ont été retenus sans être annoncés.
+    "shm_buyouts_primed": "INTEGER NOT NULL DEFAULT 0",
+    # Un salon par sorte d'annonce SHM. NULL : le salon des transactions (le classement : aucun). 0 : arrêtées.
+    "shm_waivers_channel_id": "INTEGER",
+    "shm_buyouts_channel_id": "INTEGER",
+    "shm_standings_channel_id": "INTEGER",
+    # Les messages du classement publiés : {"channel": id, "messages": [[id, texte], ...]} (JSON).
+    "shm_standings_messages": "TEXT",
+    # Le dernier classement lu, les rangs et les places gagnées ou perdues à la dernière simulation (JSON).
+    "shm_standings_state": "TEXT",
 }
+
+# Les sortes d'annonces SHM, chacune dans son propre salon si on veut.
+SHM_KINDS = ("trades", "waivers", "buyouts", "standings")
+
+# Logos appris par serveur (corrections des admins) : assez pour toutes les équipes et leurs variantes.
+LEARNED_LOGOS_KEPT = 200
 
 
 def normalize(text: str) -> str:
@@ -124,6 +163,10 @@ class Store:
             for name, definition in CONFIG_COLUMNS.items():
                 if name not in existing:
                     self.db.execute(f"ALTER TABLE config ADD COLUMN {name} {definition}")
+            if "started" not in existing:
+                # Avant le bouton « Lancer le draft », définir l'ordre lançait le draft :
+                # un draft déjà commencé dans une ancienne base continue sans rien changer.
+                self.db.execute("UPDATE config SET started = 1 WHERE guild_id IN (SELECT guild_id FROM picks)")
 
     # Salons
 
@@ -195,9 +238,17 @@ class Store:
     # Ordre et choix
 
     def set_order(self, guild_id: int, teams: list[str]) -> int:
-        """Remplace l'ordre de sélection. Retourne le nombre d'équipes par ronde."""
+        """Remplace l'ordre de sélection. Retourne le nombre d'équipes par ronde.
+
+        Le nouveau draft attend que l'admin clique sur « Lancer le draft ».
+        """
         per_round = len({normalize(t) for t in teams})
         with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, started) VALUES (?, 0) "
+                "ON CONFLICT (guild_id) DO UPDATE SET started = 0",
+                (guild_id,),
+            )
             self.db.execute("DELETE FROM picks WHERE guild_id = ?", (guild_id,))
             self.db.execute("UPDATE players SET drafted = 0 WHERE guild_id = ?", (guild_id,))
             self.db.executemany(
@@ -210,6 +261,24 @@ class Store:
         self.start_clock(guild_id)
         return per_round
 
+    def start_draft(self, guild_id: int) -> bool:
+        """Lance le draft. Retourne False s'il était déjà lancé ou s'il n'y a pas d'ordre."""
+        if self.pick_count(guild_id) == 0:
+            return False
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO config (guild_id) VALUES (?)", (guild_id,))
+            cur = self.db.execute(
+                "UPDATE config SET started = 1 WHERE guild_id = ? AND started = 0", (guild_id,)
+            )
+        if cur.rowcount != 1:
+            return False
+        self.start_clock(guild_id)
+        return True
+
+    def is_started(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT started FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0])
+
     def _picks(self, sql: str, params: tuple) -> list[Pick]:
         rows = self.db.execute(
             "SELECT number, round, in_round, team, player_id, message_id FROM picks " + sql, params
@@ -217,6 +286,9 @@ class Store:
         return [Pick(*row) for row in rows]
 
     def current_pick(self, guild_id: int) -> Pick | None:
+        """Le choix à faire maintenant. Aucun tant que le draft n'est pas lancé."""
+        if not self.is_started(guild_id):
+            return None
         picks = self._picks(
             "WHERE guild_id = ? AND player_id IS NULL ORDER BY number LIMIT 1", (guild_id,)
         )
@@ -388,6 +460,165 @@ class Store:
                 "ON CONFLICT (guild_id) DO UPDATE SET button_message_id = excluded.button_message_id",
                 (guild_id, message_id),
             )
+
+    # Annonces de transactions
+
+    def set_trades_channel(self, guild_id: int, channel_id: int) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, trades_channel_id) VALUES (?, ?) "
+                "ON CONFLICT (guild_id) DO UPDATE SET trades_channel_id = excluded.trades_channel_id",
+                (guild_id, channel_id),
+            )
+
+    def trades_channel(self, guild_id: int) -> int | None:
+        row = self.db.execute("SELECT trades_channel_id FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return row[0] if row else None
+
+    # Transactions SHM automatiques
+
+    def set_shm_league(self, guild_id: int, slug: str | None) -> None:
+        """La ligue SHM suivie par ce serveur, ou None pour arrêter.
+
+        Une nouvelle ligue repart de zéro : sa première lecture retient les transactions et le
+        ballottage déjà sur SHM sans les annoncer. La même ligue gardée telle quelle ne perd rien.
+        """
+        with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, shm_league, shm_primed) VALUES (?, ?, 0) "
+                "ON CONFLICT (guild_id) DO UPDATE SET shm_primed = CASE WHEN shm_league IS excluded.shm_league "
+                "THEN shm_primed ELSE 0 END, shm_waivers = CASE WHEN shm_league IS excluded.shm_league "
+                "THEN shm_waivers ELSE NULL END, shm_buyouts_primed = CASE WHEN shm_league IS excluded.shm_league "
+                "THEN shm_buyouts_primed ELSE 0 END, shm_league = excluded.shm_league",
+                (guild_id, slug),
+            )
+
+    def shm_league(self, guild_id: int) -> str | None:
+        row = self.db.execute("SELECT shm_league FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return row[0] if row else None
+
+    def shm_guilds(self) -> list[tuple[int, str, int | None]]:
+        """(serveur, ligue SHM, salon des transactions) de chaque serveur qui suit une ligue."""
+        rows = self.db.execute(
+            "SELECT guild_id, shm_league, trades_channel_id FROM config WHERE shm_league IS NOT NULL "
+            "ORDER BY guild_id").fetchall()
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    def shm_primed(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT shm_primed FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0])
+
+    def set_shm_primed(self, guild_id: int) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_primed = 1 WHERE guild_id = ?", (guild_id,))
+
+    def shm_waivers(self, guild_id: int) -> list[dict] | None:
+        """Les joueurs au ballottage lors de la dernière lecture, ou None si le ballottage n'a jamais été lu."""
+        row = self.db.execute("SELECT shm_waivers FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return json.loads(row[0]) if row and row[0] is not None else None
+
+    def set_shm_waivers(self, guild_id: int, waivers: list[dict]) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_waivers = ? WHERE guild_id = ?",
+                            (json.dumps(waivers, ensure_ascii=False), guild_id))
+
+    def shm_channels(self, guild_id: int) -> dict[str, int | None]:
+        """Le salon de chaque sorte d'annonce SHM, ou None si elle est arrêtée."""
+        row = self.db.execute(
+            "SELECT trades_channel_id, shm_waivers_channel_id, shm_buyouts_channel_id, shm_standings_channel_id "
+            "FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        trades, waivers, buyouts, standings = row if row else (None, None, None, None)
+        return {"trades": trades or None,
+                "waivers": trades if waivers is None else waivers or None,
+                "buyouts": trades if buyouts is None else buyouts or None,
+                "standings": standings or None}
+
+    def set_shm_channels(self, guild_id: int, trades: int, waivers: int | None, buyouts: int | None,
+                         standings: int | None) -> None:
+        """Les salons des annonces SHM. None arrête cette sorte d'annonce."""
+        with self.db:
+            self.db.execute(
+                "INSERT INTO config (guild_id, trades_channel_id, shm_waivers_channel_id, shm_buyouts_channel_id, "
+                "shm_standings_channel_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT (guild_id) DO UPDATE SET "
+                "trades_channel_id = excluded.trades_channel_id, "
+                "shm_waivers_channel_id = excluded.shm_waivers_channel_id, "
+                "shm_buyouts_channel_id = excluded.shm_buyouts_channel_id, "
+                "shm_standings_channel_id = excluded.shm_standings_channel_id",
+                (guild_id, trades, waivers or 0, buyouts or 0, standings or 0),
+            )
+
+    def standings_messages(self, guild_id: int) -> tuple[int | None, list[tuple[int, str]]]:
+        """(salon, [(message, texte)]) du classement publié."""
+        row = self.db.execute("SELECT shm_standings_messages FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        if not row or not row[0]:
+            return None, []
+        data = json.loads(row[0])
+        return data["channel"], [(m[0], m[1]) for m in data["messages"]]
+
+    def set_standings_messages(self, guild_id: int, channel_id: int | None, messages: list[tuple[int, str]]) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_standings_messages = ? WHERE guild_id = ?",
+                            (json.dumps({"channel": channel_id, "messages": messages}, ensure_ascii=False),
+                             guild_id))
+
+    def standings_state(self, guild_id: int) -> dict | None:
+        row = self.db.execute("SELECT shm_standings_state FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return json.loads(row[0]) if row and row[0] else None
+
+    def set_standings_state(self, guild_id: int, state: dict) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_standings_state = ? WHERE guild_id = ?",
+                            (json.dumps(state, ensure_ascii=False), guild_id))
+
+    def shm_feed(self, league: str) -> list[list[str]]:
+        """Les « Changements par équipe » lus la dernière fois dans cette ligue : gardés après un redémarrage."""
+        row = self.db.execute("SELECT rows FROM shm_feeds WHERE league = ?", (league,)).fetchone()
+        return json.loads(row[0]) if row else []
+
+    def set_shm_feed(self, league: str, rows: list[list[str]] | None) -> None:
+        with self.db:
+            if rows is None:
+                self.db.execute("DELETE FROM shm_feeds WHERE league = ?", (league,))
+            else:
+                self.db.execute("INSERT OR REPLACE INTO shm_feeds VALUES (?, ?)",
+                                (league, json.dumps(rows, ensure_ascii=False)))
+
+    def shm_buyouts_primed(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT shm_buyouts_primed FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0])
+
+    def set_shm_buyouts_primed(self, guild_id: int) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_buyouts_primed = 1 WHERE guild_id = ?", (guild_id,))
+
+    def learned_logos(self, guild_id: int) -> list[tuple[int, bytes]]:
+        """Les logos qu'un admin a associés à un rôle, du plus récent au plus ancien."""
+        rows = self.db.execute(
+            "SELECT role_id, descriptor FROM trade_logos WHERE guild_id = ? ORDER BY at DESC, rowid DESC",
+            (guild_id,),
+        ).fetchall()
+        return [(row[0], bytes(row[1])) for row in rows]
+
+    def learn_logo(self, guild_id: int, role_id: int, descriptor: bytes) -> None:
+        with self.db:
+            # Le même logo associé à un autre rôle : la dernière correction l'emporte.
+            self.db.execute("DELETE FROM trade_logos WHERE guild_id = ? AND descriptor = ?", (guild_id, descriptor))
+            self.db.execute("INSERT INTO trade_logos VALUES (?, ?, ?, ?)", (guild_id, role_id, descriptor, time.time()))
+            self.db.execute(
+                "DELETE FROM trade_logos WHERE guild_id = ? AND rowid NOT IN (SELECT rowid FROM trade_logos "
+                "WHERE guild_id = ? ORDER BY at DESC, rowid DESC LIMIT ?)",
+                (guild_id, guild_id, LEARNED_LOGOS_KEPT),
+            )
+
+    def is_announced(self, guild_id: int, fingerprint: str) -> bool:
+        return self.db.execute(
+            "SELECT 1 FROM announced_trades WHERE guild_id = ? AND fingerprint = ?", (guild_id, fingerprint)
+        ).fetchone() is not None
+
+    def mark_announced(self, guild_id: int, fingerprint: str) -> None:
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO announced_trades VALUES (?, ?, ?)",
+                            (guild_id, fingerprint, time.time()))
 
     # Journal et sauvegardes
 

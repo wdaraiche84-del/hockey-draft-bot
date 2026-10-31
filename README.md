@@ -30,18 +30,68 @@ Les réponses du bot sont privées : les salons restent propres. Après un choix
 
 ### Le panneau `/admin`
 
-Le panneau montre l'état du draft avec des ✅ et des ❌, et la prochaine étape à faire. Il se met à jour tout seul après chaque changement.
+Le panneau ne montre qu'un seul bouton à la fois : la prochaine chose à faire. Il se met à jour tout seul après chaque changement.
 
-**Préparer le draft** (dans l'ordre) :
+**Préparer le draft** (un bouton bleu par étape, dans l'ordre) :
 
-1. **Salons** : choisir dans deux menus le salon de la liste et le salon des annonces.
-2. **Joueurs** : envoyer le fichier des joueurs (voir plus bas).
-3. **Ordre** : écrire les équipes de la 1re ronde, le nombre de rondes, et si l'ordre s'inverse à chaque ronde (serpentin).
-4. **Délai** (facultatif) : le temps pour chaque choix (`8h`, `90m`, `1h30`, `0` pour aucun) et le rôle à avertir.
+1. **Choisir les salons** : choisir dans deux menus le salon de la liste et le salon des annonces.
+2. **Importer les joueurs** : envoyer le fichier des joueurs (voir plus bas).
+3. **Définir l'ordre du draft** : écrire les équipes de la 1re ronde, le nombre de rondes, et si l'ordre s'inverse à chaque ronde (serpentin).
+4. **▶ Lancer le draft** : le draft commence et la première équipe est avertie. Personne ne peut choisir avant.
 
-**Pendant le draft** : **Choisir pour l'équipe au tour**, **Annuler le dernier choix**, **Échanger un choix** (numéro du choix + rôle de la nouvelle équipe), **Journal** (fichier Excel/CSV de toutes les actions) et **Actualiser**.
+**Pendant le draft** : **Choisir pour l'équipe au tour** et **Annuler le dernier choix**.
+
+**Plus d'options** (toujours là) : changer les salons, les joueurs ou l'ordre, **Délai par choix** (`8h`, `90m`, `1h30`, `0` pour aucun, et le rôle à avertir), **Échanger un choix** (numéro du choix + rôle de la nouvelle équipe) et **Journal** (fichier Excel/CSV de toutes les actions). Changer l'ordre pendant un draft le remet à zéro : il faut le relancer.
 
 Le panneau se ferme après 14 minutes (limite de Discord) : refaire `/admin` pour le rouvrir.
+
+### Annoncer une transaction
+
+Le bouton **📣 Annoncer une transaction** est toujours dans `/admin`, avant, pendant et après le draft.
+
+1. Faire une capture d'écran du tableau des transactions de SHM (colonnes « Vers » et « Éléments », avec les logos). Une partie du tableau suffit.
+2. Cliquer sur **Annoncer une transaction**, ajouter la capture et choisir le salon des annonces de transactions (le bot s'en souvient).
+3. Le bot montre ce qu'il a lu : qui reçoit quoi, pour chaque transaction. Tout est coché, sauf ce qui a déjà été annoncé. Décocher ce qu'il ne faut pas annoncer.
+4. Une erreur ? **Corriger** : choisir le rôle de l'équipe et corriger les éléments (un par ligne). Le bot retient ce logo pour la prochaine fois.
+5. **Annoncer** : une annonce par transaction, de la plus ancienne à la plus récente, qui mentionne le rôle de chaque équipe :
+
+```
+🔁 Transaction
+➡️ @Flames reçoit : Daniil Tarasov
+➡️ @Oilers reçoit : Choix de 2e ronde 2020 (Blues)
+```
+
+La lecture est **gratuite** et se fait sur l'ordinateur du bot (RapidOCR) : aucune image n'est envoyée ailleurs. Les logos des 30 équipes SHM sont reconnus. Le rôle d'une équipe est trouvé par son nom, son surnom, sa ville ou son code (« Bruins », « Les Bruins de Boston », « Boston », « BOS »). Si deux rôles conviennent, ou aucun, l'aperçu le signale et l'admin choisit avec **Corriger**. Rien n'est publié avant le clic sur **Annoncer**.
+
+### Emotes d'équipe
+
+Si le serveur a une emote pour une équipe, le bot la met devant le nom de l'équipe dans les annonces de transactions et de choix au draft. L'emote doit porter le code ou le nom de l'équipe : `:PIT:`, `:pit:`, `:Penguins:` ou `:Pittsburgh_Penguins:` (pas `:PIT2:`). Rien à régler : le bot les trouve tout seul.
+
+### Annonces SHM automatiques (transactions, ballottage, rachats, classement)
+
+Le bot peut aussi lire lui-même les transactions sur SHM et les annoncer sans que personne n'ait rien à faire.
+
+1. Le bot a son propre compte SHM (voir `SHM_USERNAME` et `SHM_PASSWORD` dans l'installation). Le commissaire de la ligue ajoute ce compte comme **membre de sa ligue, sans équipe**.
+2. Dans `/admin` : **Plus d'options**, puis **🔄 Annonces SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir un salon pour chaque sorte d'annonce : transactions (obligatoire), ballottage, rachats et classement. Le même salon peut servir pour plusieurs. Laisser un salon vide arrête cette sorte d'annonce ; quand on la rallume, seul ce qui arrive ensuite est annoncé.
+3. Le bot essaie tout de suite : s'il ne voit pas la ligue, il le dit et ne change rien. S'il la voit, les transactions déjà sur SHM ne sont **pas** réannoncées : seules les suivantes le seront.
+
+Ensuite, le bot regarde la page **Historique des transactions** de la ligue toutes les 5 minutes et annonce chaque nouvelle transaction, de la plus ancienne à la plus récente, dans le même format que les captures. Une transaction déjà annoncée avec une capture n'est pas répétée, et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
+
+Le bot suit aussi le **ballottage** de la ligue, dans le même salon :
+
+- ⚠️ un joueur **soumis** au ballottage (équipe, position, âge, salaire, années de contrat, fin du ballottage), sans notification, car plusieurs joueurs sont souvent soumis en même temps ;
+- ✅ un joueur **réclamé** : l'équipe qui l'obtient et celle qui l'a soumis, avec notification des deux rôles ;
+- ↩️ un joueur **pas réclamé** (il devient joueur autonome ou va dans la LAH).
+
+Il lit pour ça la page **Ballottage** et les **Changements par équipe** de l'accueil de la ligue. L'accueil ne montre que les 30 dernières actions : si plus de 30 actions ont eu lieu entre deux lectures, le bot ne peut pas être sûr qu'un joueur n'a pas été réclamé à la dernière minute, alors il n'annonce pas « pas réclamé » (il ne devine jamais). Les joueurs déjà au ballottage quand on branche la ligue ne sont pas annoncés.
+
+Le bot annonce aussi les **rachats** (💸 l'équipe, le joueur et le salaire du rachat), lus dans les **Changements par équipe** de l'accueil, sans notification. SHM y montre parfois le logo du club-école (ex. Bridgeport) au lieu de l'équipe LNH : le bot retrouve l'équipe grâce à une autre ligne sur le même joueur (ex. « descendu en AHL » par les Islanders). Sinon, il lit les pages **Effectifs** des équipes jusqu'à trouver à qui appartient ce club-école (une seule fois par équipe tant que le bot tourne). Il retient ce club-école pour la suite. S'il ne le trouve nulle part, il nomme le club-école sans deviner. Les rachats déjà sur l'accueil quand on branche la ligue ne sont pas annoncés, et un rachat n'est jamais annoncé deux fois. Comme l'accueil ne montre que les 30 dernières actions, un rachat peut être manqué si plus de 30 actions ont lieu en 5 minutes.
+
+Le bot peut aussi publier le **classement** de la ligue (Association de l'Est et de l'Ouest) dans un salon, avec une flèche 🟢 ▲ ou 🔴 ▼ pour les places gagnées ou perdues depuis la simulation d'avant. Il modifie ensuite le même message quand le classement change sur SHM, donc après chaque simulation : le salon reste propre. Si le message est effacé à la main, il est republié ; si on change de salon, l'ancien est effacé.
+
+**Plus d'options** montre l'état : la ligue suivie, le salon de chaque annonce et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
+
+Le bot demande au plus une page SHM toutes les 2 secondes (d’habitude 3 pages par ligue toutes les 5 minutes), et une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Si SHM refuse le mot de passe, le bot n'insiste pas (nouvel essai après 30 minutes), pour ne pas faire bloquer le compte.
 
 ### Fichier des joueurs
 
@@ -55,7 +105,7 @@ Mario Lemieux;Laval;C
 
 ### Ordre avec des choix échangés
 
-Dans **3. Ordre**, écrire tous les choix du draft dans l'ordre, une équipe par ligne, et mettre **1** ronde. Les choix échangés sont simplement écrits au nom de leur nouveau propriétaire.
+Dans **Définir l'ordre du draft** (ou **Plus d'options**, **Changer l'ordre**), écrire tous les choix du draft dans l'ordre, une équipe par ligne, et mettre **1** ronde. Les choix échangés sont simplement écrits au nom de leur nouveau propriétaire.
 
 ```
 Laval
@@ -81,7 +131,7 @@ Réimporter la liste ou redéfinir l'ordre remet le draft à zéro. Le bot le di
 2. Inviter le bot avec les portées `bot` et `applications.commands`, et les permissions *Voir les salons*, *Envoyer des messages*, *Lire l'historique des messages*, *Gérer les messages* et *Mentionner @everyone, @here et tous les rôles* (pour mentionner les rôles d'équipe).
 3. Dans le salon de la liste, retirer *Envoyer des messages* aux membres mais leur laisser *Utiliser les commandes de l'application*.
 4. Créer un rôle par équipe, au nom exact de l'équipe, et le donner à son DG.
-5. Installer et lancer (Python 3.10 ou plus) :
+5. Installer et lancer (Python 3.11 ou plus pour lire les captures de transactions ; 3.10 suffit pour le reste) :
 
 ```
 pip install -r requirements.txt
@@ -90,10 +140,11 @@ python -m draft_bot
 ```
 
 6. Dans Discord : `/admin`, puis suivre les étapes 1, 2, 3 (et 4 pour un délai).
+7. Facultatif, pour les transactions SHM automatiques : créer un compte SHM pour le bot, puis écrire son nom d'utilisateur et son mot de passe dans `.env` (`SHM_USERNAME` et `SHM_PASSWORD`) et relancer le bot.
 
 ### Mettre à jour le bot
 
-Après avoir remplacé le dossier `draft_bot` et le fichier `requirements.txt` par la nouvelle version, mettre à jour les bibliothèques une fois (le panneau admin demande discord.py 2.7 ou plus), puis relancer :
+Après avoir remplacé le dossier `draft_bot` et le fichier `requirements.txt` par la nouvelle version, mettre à jour les bibliothèques une fois (le panneau admin demande discord.py 2.7 ou plus, et la lecture des captures télécharge environ 100 Mo la première fois), puis relancer :
 
 ```
 pip install -U -r requirements.txt
@@ -111,13 +162,15 @@ Inviter le bot sur le serveur avec le même lien d'invitation (portées `bot` et
 Le dépôt est prêt pour Railway : `railway.json` donne la commande de démarrage (`python -m draft_bot`) et redémarre le bot s'il plante, et `.python-version` fixe Python 3.12.
 
 1. Sur Railway : **New Project** > **Deploy from GitHub repo** > `hockey-draft-bot`.
-2. Dans le service : **Variables** > ajouter `DISCORD_TOKEN` (le jeton du bot). `GUILD_IDS` n'est plus nécessaire : elle peut être supprimée, elle ne gêne pas.
+2. Dans le service : **Variables** > ajouter `DISCORD_TOKEN` (le jeton du bot), et `SHM_USERNAME` et `SHM_PASSWORD` pour les transactions SHM automatiques. `GUILD_IDS` n'est plus nécessaire : elle peut être supprimée, elle ne gêne pas.
 3. Clic droit sur le service (ou **Ctrl+K**) > **Attach volume**, chemin de montage : `/data`. La base du draft, son journal et les sauvegardes y sont gardés entre les redéploiements.
 4. Arrêter le bot sur le PC avant que Railway le démarre : un même jeton ne doit tourner qu'à un seul endroit.
 
 Sans volume, le bot refuse de démarrer sur Railway, pour ne jamais perdre un draft au redéploiement. Une deuxième copie du bot ne peut pas ouvrir la même base : pendant un redéploiement, la nouvelle copie attend que l'ancienne s'arrête.
 
 Chaque merge sur `main` redéploie le bot automatiquement.
+
+La lecture d'une capture se fait dans un processus à part : elle utilise environ 400 Mo de mémoire pendant quelques secondes, puis les rend. Une seule capture est lue à la fois.
 
 ## Tests
 

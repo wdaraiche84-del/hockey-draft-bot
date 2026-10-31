@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<!-- Copie réduite de https://simulatedhockeymanager.ca/login : le formulaire seulement, jeton remplacé. -->
+<html lang="fr"><head><meta charset="UTF-8"><title>Connexion</title></head><body>
+<form role="form" method="POST" action="https://simulatedhockeymanager.ca/login" autocomplete="on" data-gtm-form-interact-id="0">
+    <input type="hidden" name="_token" value="JETON_DE_TEST" autocomplete="off">
+
+    <div class="form-group mb-4">
+        <div class="w-100">
+    <div class="d-flex flex-column">
+                    <label for="text-username">Nom d'utilisateur</label>
+        
+        <input id="text-username" name="username" type="text" value="" required="required" class="form-control form-control-md" autofocus="autofocus" autocomplete="username" data-gtm-form-interact-field-id="0">
+
+        
+            </div>
+
+    
+</div>
+    </div>
+
+    <div class="form-group mb-4">
+        <div class="w-100">
+    <div class="d-flex flex-column">
+                    <label for="password-password">Mot de passe</label>
+        
+        <input id="password-password" name="password" type="password" value="" required="required" autocomplete="current-password" class="form-control form-control-md" data-gtm-form-interact-field-id="1">
+
+        
+                    <div class="mb-2 d-flex align-self-end">
+                <a href="https://simulatedhockeymanager.ca/password/reset" tabindex="-1" class="text-decoration-none text-black-50 text-size-12 forgot-password mb-2">
+                    Mot de passe oublié
+                </a>
+            </div>
+            </div>
+
+    
+</div>
+    </div>
+
+    <div class="form-group mb-3">
+        <div class="custom-control custom-checkbox" x-data="{ hasError: false, hasInteracted: false }">
+    <input id="checkbox-remember" name="remember" type="checkbox" value="1" class="custom-control-input" :class="{ 'is-invalid': hasError &amp;&amp; !hasInteracted }" @change="hasInteracted = true" @focus="hasInteracted = true">
+
+    <label class="custom-control-label" for="checkbox-remember" id="label-checkbox-remember">
+                    Se souvenir de moi
+                    </label>
+
+    </div>
+
+
+
+
+    </div>
+
+    <div class="w-100 d-flex flex-column justify-content-between align-items-center">
+        <button type="submit" class="btn btn-primary btn-md w-100">
+            Se connecter
+        </button>
+
+        <div class="my-4" data-aaad="true" style="text-align:center; margin-left:auto; margin-right:auto;" data-aa-adunit="/21722279357/970x250_OB_simulatedhockeymanager"></div>
+
+        <div class="d-flex align-items-center mt-3">
+            Vous n'avez pas de compte ?
+            <a class="ml-1 text-decoration-none font-weight-bolder text-dark" href="https://simulatedhockeymanager.ca/register">
+                Créer un nouveau
+            </a>
+        </div>
+    </div>
+</form>
+</body></html>
