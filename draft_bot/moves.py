@@ -121,10 +121,12 @@ def standings(page: shm.StandingsPage, emojis: dict[str, str], moves: dict[str, 
         lines += [standing_line(rank, row, page.teams, emojis, moves.get(row.team, 0))
                   for rank, row in enumerate(rows, 1)]
         sections.append("\n".join(lines))
-    sections.append(STANDINGS_FOOTER)
     messages = [""]
     for section in sections:
         if messages[-1] and len(messages[-1]) + 2 + len(section) > MESSAGE_LIMIT:
             messages.append("")
         messages[-1] = f"{messages[-1]}\n\n{section}" if messages[-1] else section
+    # La petite ligne du bas va toujours avec le dernier groupe, jamais seule dans un message :
+    # MESSAGE_LIMIT laisse la place qu'il faut sous la limite de 2000 caractères de Discord.
+    messages[-1] += f"\n\n{STANDINGS_FOOTER}"
     return messages

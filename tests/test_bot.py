@@ -2181,6 +2181,9 @@ def test_long_standings_are_split_without_cutting_a_division():
     assert len(messages) > 1 and all(len(m) <= 2000 for m in messages)
     assert sum(m.count("**Division ") for m in messages) == 8
     assert all(m.count("Arizona Coyotes") % 8 == 0 for m in messages)
+    # La ligne du bas n'est jamais seule dans un message.
+    assert all("**Division " in m for m in messages)
+    assert messages[-1].endswith(moves.STANDINGS_FOOTER)
 
 
 def test_draft_pick_announcement_shows_the_team_emote(league):
