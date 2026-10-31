@@ -258,7 +258,7 @@ class FakeShm:
         return handler
 
     async def history(self, request):
-        self.user_agents.add(request.headers.get("User-Agent"))
+        self.user_agents.add((request.headers.get("User-Agent"), request.headers.get("X-Bot")))
         if self.blocked:
             return web.Response(status=403, text="<title>Just a moment...</title>", headers={"Server": "cloudflare"})
         if request.cookies.get("session") != "connecte" or self.expire_next:
@@ -302,7 +302,10 @@ def test_client_logs_in_once_then_reads_pages(fake_shm):
     assert len(first.trades) == len(second.trades) == 15
     assert fake_shm.logins == 1
     assert fake_shm.history_requests == [("lnhs_2", "1"), ("lnhs_2", "2")]
-    assert fake_shm.user_agents == {shm.USER_AGENT}
+    # Le bot se présente : nom, version et compte SHM, pour que les admins de SHM le reconnaissent.
+    assert fake_shm.user_agents == {(
+        f"HockeySimsTools/{shm.BOT_VERSION} (bot Discord des ligues SHM; compte SHM : HockeySimsTools)",
+        "HockeySimsTools; compte=HockeySimsTools")}
 
 
 def test_client_reads_the_waivers_and_home_pages_with_the_same_login(fake_shm):
