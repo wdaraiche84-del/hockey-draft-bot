@@ -2131,18 +2131,27 @@ def test_standings_are_posted_then_edited_after_each_simulation(shm_league):
         await bot.check_shm()
         after_sim = list(standings.texts())
         await bot.check_shm()
-        return i.last, first, unchanged, after_sim
-    text, first, unchanged, after_sim = run(scenario())
+        same = list(standings.texts())
+        # Sans nouvelle partie jouée, SHM change l'ordre de deux équipes à égalité : pas de flèche de plus.
+        rows = west()
+        rows[3], rows[4] = rows[4], rows[3]
+        await bot.check_shm()
+        shuffled = list(standings.texts())
+        return i.last, first, unchanged, after_sim, same, shuffled
+    text, first, unchanged, after_sim, same, shuffled = run(scenario())
     assert "Classement : #classement" in text
     assert len(first) == 1 and first == unchanged
     assert first[0].startswith("📊 **Classement**")
     assert "**Association de l'Ouest**\n` 1.` " + str(ari) + " Arizona Coyotes — **0 pt** · 0 PJ · 0-0-0\n" in first[0]
     assert "▲" not in first[0].split("\n", 2)[2]
     # Le même message est modifié, pas un nouveau, avec une flèche pour qui a bougé.
-    assert len(after_sim) == 1 and standings.texts() == after_sim
+    assert len(after_sim) == 1 and len(standings.texts()) == 1
     lines = after_sim[0].splitlines()
     assert f"` 3.` {ari} Arizona Coyotes — **2 pts** · 1 PJ · 0-0-0 🔴 ▼2" in lines
     assert any(line.startswith("` 1.`") and line.endswith("🟢 ▲1") for line in lines)
+    assert same == after_sim
+    assert len(shuffled) == 1
+    assert shuffled[0].count("▲") + shuffled[0].count("▼") == after_sim[0].count("▲") + after_sim[0].count("▼")
     assert channel.texts() == []
 
 
