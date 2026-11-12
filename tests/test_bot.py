@@ -196,6 +196,7 @@ def league():
     laval, granby = FakeRole("Laval"), FakeRole("Granby")
     liste, selections = FakeChannel("draft-liste"), FakeChannel("draft-selections")
     guild = FakeGuild([laval, granby], [liste, selections])
+    store.approve_guild(guild.id, None)
     store.set_channels(guild.id, liste.id, selections.id)
     store.replace_players(guild.id, [("Patrick Roy", "Granby", "G"), ("Mario Lemieux", "Laval", "C"),
                                      ("Ray Bourque", "Montréal", "D")])
@@ -214,6 +215,7 @@ def empty_league():
     laval, granby, admins = FakeRole("Laval"), FakeRole("Granby"), FakeRole("Admins")
     liste, selections = FakeChannel("draft-liste"), FakeChannel("draft-selections")
     guild = FakeGuild([laval, granby, admins], [liste, selections])
+    store.approve_guild(guild.id, None)
     admin = FakeMember(guild, [], admin=True)
     return bot, store, guild, admin, liste, selections
 
@@ -1109,6 +1111,8 @@ class SyncRecorder:
 class SyncGuild:
     def __init__(self, guild_id):
         self.id, self.name = guild_id, f"serveur {guild_id}"
+        self.system_channel, self.text_channels, self.member_count, self.owner_id = None, [], 3, None
+        self.me = FakeJoinMember(audit=False)
 
     async def leave(self):
         raise AssertionError("le bot ne doit jamais quitter un serveur tout seul")
@@ -1297,6 +1301,7 @@ def nhl(monkeypatch):
     roles = [FakeRole(name) for name in NHL_ROLES]
     trades = FakeChannel("transactions")
     guild = FakeGuild(roles, [trades])
+    store.approve_guild(guild.id, None)
     return bot, store, guild, admin_of(guild), trades, {r.name: r for r in roles}
 
 
@@ -1616,8 +1621,12 @@ def shm_league():
     roles = [FakeRole(name) for name in SHM_ROLES]
     trades = FakeChannel("transactions")
     guild = FakeGuild(roles, [trades])
+    store.approve_guild(guild.id, None)
     bot.get_guild = lambda guild_id: guild if guild_id == guild.id else None
-    return bot, store, guild, admin_of(guild), trades, {r.name: r for r in roles}, site
+    # Seul le créateur du bot branche SHM : ici, c'est lui qui configure.
+    admin = admin_of(guild)
+    bot.owner_ids = {admin.id}
+    return bot, store, guild, admin, trades, {r.name: r for r in roles}, site
 
 
 SAME = object()
@@ -1762,9 +1771,13 @@ def test_two_servers_on_the_same_league_read_it_once(shm_league):
     guilds = {guild.id: guild, other.id: other}
     bot.get_guild = guilds.get
 
+    store.approve_guild(other.id, None)
+    other_admin = admin_of(other)
+    bot.owner_ids.add(other_admin.id)
+
     async def scenario():
         await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        await setup_shm_from_panel(bot, other, admin_of(other), other_channel, "lnhs_2")
+        await setup_shm_from_panel(bot, other, other_admin, other_channel, "lnhs_2")
         site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
         site.requests.clear()
         site.other_requests.clear()
@@ -1809,6 +1822,7 @@ def test_shm_can_be_turned_off(shm_league):
 def test_shm_button_explains_when_the_bot_has_no_shm_account(league):
     bot, store, guild, _, _, _ = league
     admin = admin_of(guild)
+    bot.owner_ids = {admin.id}
 
     async def scenario():
         panel = (await open_panel(bot, guild, admin)).view
@@ -2216,3 +2230,274 @@ def test_draft_pick_announcement_shows_the_team_emote(league):
     run(scenario())
     assert any(t.startswith(f"🏒 {emote} **Penguins** est fier de sélectionner **Mario Lemieux**")
                for t in selections.texts())
+
+
+# Un nouveau serveur invite le bot : bienvenue chez eux, « Nouveau client » en privé au créateur du bot,
+# et le panneau /admin reste bloqué tant que le créateur n'a pas activé le serveur.
+
+from draft_bot.bot import ApproveServerButton  # noqa: E402
+
+
+class FakeUser:
+    def __init__(self, name, refuse_dm=False):
+        self.id = next(ids)
+        self.name = name
+        self.dms = []
+        self.refuse_dm = refuse_dm
+
+    async def send(self, content, **kwargs):
+        if self.refuse_dm:
+            raise discord.Forbidden(FakeHTTPResponse(), "messages privés fermés")
+        self.dms.append((content, kwargs.get("view")))
+
+
+class FakeJoinPermissions:
+    def __init__(self, write=True, invite=False, audit=False):
+        self.view_channel = self.send_messages = write
+        self.create_instant_invite = invite
+        self.view_audit_log = audit
+
+
+class FakeJoinMember:
+    def __init__(self, audit):
+        self.guild_permissions = FakeJoinPermissions(audit=audit)
+
+
+class FakeInvite:
+    url = "https://discord.gg/abc123"
+
+
+class FakeJoinChannel(FakeChannel):
+    def __init__(self, name, position, write=True, invite=False):
+        super().__init__(name, bot_allowed=write)
+        self.position, self.invite = position, invite
+        self.invites = []
+
+    def permissions_for(self, member):
+        return FakeJoinPermissions(write=self.bot_allowed, invite=self.invite)
+
+    async def create_invite(self, **kwargs):
+        self.invites.append(kwargs)
+        return FakeInvite()
+
+
+class FakeAuditEntry:
+    def __init__(self, target, user):
+        self.target, self.user = target, user
+
+
+class FakeJoinGuild:
+    """Un serveur qui vient d'inviter le bot."""
+
+    def __init__(self, name, channels, system_channel=None, audit_entries=None, owner=None):
+        self.id = next(ids)
+        self.name = name
+        self.text_channels = channels
+        self.channels = {c.id: c for c in channels}
+        self.system_channel = system_channel
+        self.member_count = 42
+        self.owner_id = owner.id if owner else None
+        self.audit_entries = audit_entries
+        self.me = FakeJoinMember(audit=audit_entries is not None)
+        self.roles = []
+
+    def get_channel(self, channel_id):
+        return self.channels.get(channel_id)
+
+    def get_role(self, role_id):
+        return None
+
+    def get_member(self, user_id):
+        return None
+
+    async def audit_logs(self, limit, action):
+        assert action == discord.AuditLogAction.bot_add
+        for entry in self.audit_entries or []:
+            yield entry
+
+
+@pytest.fixture
+def welcome():
+    """Le bot, son créateur (William) et un serveur qui vient de l'inviter."""
+    store = Store(":memory:")
+    bot = DraftBot(store, backup_dir=None, support_url="https://discord.gg/support")
+    bot.backup = lambda reason: None
+    william, bot_user, commissioner, guild_owner = (FakeUser("william"), FakeUser("Hockey Sims Tools"),
+                                                    FakeUser("tyler"), FakeUser("patron"))
+    users = {u.id: u for u in (william, commissioner, guild_owner)}
+    bot.get_user = users.get
+    bot._connection.user = bot_user
+    bot.owner_ids, bot.owner_name = {william.id}, "william"
+    general = FakeJoinChannel("général", position=0, invite=True)
+    guild = FakeJoinGuild("Ligue LHJMQ", [FakeJoinChannel("règlements", 1, write=False), general],
+                          system_channel=general, owner=guild_owner,
+                          audit_entries=[FakeAuditEntry(FakeUser("autre bot"), guild_owner),
+                                         FakeAuditEntry(bot_user, commissioner)])
+    guilds = {guild.id: guild}
+    bot.get_guild = guilds.get
+    bot.sync_guild = lambda g: asyncio.sleep(0, result=True)
+    return bot, store, guild, william, general
+
+
+def test_new_server_gets_a_welcome_and_william_gets_new_client_dm(welcome):
+    bot, store, guild, william, general = welcome
+    run(bot.on_guild_join(guild))
+    # Chez le client : un seul message, qui dit de passer par William et comment le joindre.
+    [text] = general.texts()
+    assert "Merci d'avoir ajouté Hockey Sims Tools" in text and "**william**" in text
+    assert "https://discord.gg/support" in text
+    assert general.sent_mentions == [bot_module.NO_PINGS]
+    # Chez William : « Nouveau client » avec tout ce qu'il faut pour aller les voir.
+    [(dm, view)] = william.dms
+    assert "Nouveau client" in dm and "Ligue LHJMQ" in dm
+    assert "Membres : 42" in dm and "Propriétaire du serveur : **patron**" in dm
+    assert "Ajouté par : **tyler**" in dm  # pas « autre bot » : la bonne ligne du journal
+    assert "https://discord.gg/abc123" in dm
+    assert general.invites[0]["max_age"] == 7 * 24 * 3600
+    [item] = view.children
+    assert item.custom_id == f"serveur:activer:{guild.id}"
+    assert store.was_notified(guild.id) and not store.is_approved(guild.id)
+
+
+def test_new_server_without_permissions_still_warns_william(welcome):
+    bot, store, guild, william, general = welcome
+    general.bot_allowed, general.invite = False, False
+    guild.audit_entries = None
+    guild.me = FakeJoinMember(audit=False)
+    run(bot.on_guild_join(guild))
+    assert general.texts() == []
+    [(dm, _)] = william.dms
+    assert "Ajouté par : inconnu" in dm and "demande-leur un lien" in dm
+    assert "n'ont pas reçu le message de bienvenue" in dm
+
+
+def test_welcome_goes_to_first_writable_channel_when_no_system_channel(welcome):
+    bot, store, guild, william, general = welcome
+    guild.system_channel = None
+    later = FakeJoinChannel("discussion", position=5)
+    guild.text_channels = [later, general]
+    run(bot.on_guild_join(guild))
+    assert len(general.texts()) == 1 and later.texts() == []
+
+
+def test_william_with_closed_dms_does_not_break_the_join(welcome):
+    bot, store, guild, william, general = welcome
+    william.refuse_dm = True
+    run(bot.on_guild_join(guild))
+    assert len(general.texts()) == 1 and store.was_notified(guild.id)
+
+
+def test_admin_panel_is_locked_until_william_activates_the_server(welcome):
+    bot, store, guild, william, general = welcome
+    run(bot.on_guild_join(guild))
+    admin = FakeMember(guild, [], admin=True)
+    i = run(command(bot, "admin", FakeInteraction(guild, admin)))
+    assert not isinstance(i.view, AdminPanel) and i.view is None
+    assert "pas encore activé" in i.last and "**william**" in i.last and "https://discord.gg/support" in i.last
+    # Un admin du serveur ne peut pas cliquer sur le bouton d'activation (s'il le voyait).
+    item = ApproveServerButton(guild.id)
+    refused = FakeInteraction(guild, admin)
+    refused.client = bot
+    assert not run(item.interaction_check(refused))
+    assert "Seul le créateur" in refused.last and not store.is_approved(guild.id)
+
+
+def test_william_activates_from_admin_in_their_server_and_gets_the_panel(welcome):
+    bot, store, guild, william, general = welcome
+    william.guild_permissions = FakePermissions(manage_guild=True)
+    i = run(command(bot, "admin", FakeInteraction(guild, william)))
+    assert "Tu es le créateur du bot" in i.last
+    [item] = i.view.children
+    click_i = FakeInteraction(guild, william)
+    click_i.client, click_i.message = bot, None
+    assert run(item.interaction_check(click_i))
+    run(item.callback(click_i))
+    assert store.is_approved(guild.id) and isinstance(click_i.view, AdminPanel)
+    assert "est activé" in click_i.last
+    # Maintenant, les admins du serveur ont le panneau normal.
+    admin = FakeMember(guild, [], admin=True)
+    assert isinstance(run(command(bot, "admin", FakeInteraction(guild, admin))).view, AdminPanel)
+    assert store.log_entries(guild.id)[-1][2:] == ("serveur", "activé par le créateur du bot")
+
+
+def test_william_activates_from_the_private_message(welcome):
+    bot, store, guild, william, general = welcome
+    run(bot.on_guild_join(guild))
+    [(dm, view)] = william.dms
+    [item] = view.children
+
+    class DM:
+        content = dm
+    click_i = FakeInteraction(guild, william)
+    click_i.guild, click_i.guild_id, click_i.client, click_i.message = None, None, bot, DM()
+    run(item.callback(click_i))
+    assert store.is_approved(guild.id)
+    assert click_i.last.startswith("🔔 **Nouveau client!**") and "**Ligue LHJMQ** est activé" in click_i.last
+    assert click_i.view is None  # le bouton disparaît
+    again = FakeInteraction(guild, william)
+    again.guild, again.guild_id, again.client, again.message = None, None, bot, DM()
+    run(ApproveServerButton(guild.id).callback(again))
+    assert "était déjà activé" in again.last
+
+
+def test_activation_button_works_after_a_restart():
+    template = ApproveServerButton.__discord_ui_compiled_template__
+    match = template.fullmatch("serveur:activer:1564525571302629456")
+    item = run(ApproveServerButton.from_custom_id(None, None, match))
+    assert item.guild_id == 1564525571302629456 and item.item.custom_id == "serveur:activer:1564525571302629456"
+    assert template.fullmatch("draft:faire-mon-choix") is None
+
+
+def test_first_start_keeps_existing_servers_working_but_not_later_ones(welcome, fake_guilds):
+    bot, store, guild, william, general = welcome
+    old_league = FakeJoinGuild("Ligue de William", [FakeJoinChannel("général", 0)])
+    bot.__dict__["joined"] = [old_league]
+    run(bot.on_ready())
+    assert store.is_approved(old_league.id) and william.dms == [] and old_league.text_channels[0].texts() == []
+    # Un serveur qui invite le bot pendant qu'il est éteint : accueilli au démarrage suivant, une seule fois.
+    bot.__dict__["joined"] = [old_league, guild]
+    run(bot.on_ready())
+    run(bot.on_ready())  # reconnexion
+    assert not store.is_approved(guild.id)
+    assert len(william.dms) == 1 and len(general.texts()) == 1
+
+
+def test_reinvited_active_server_is_not_welcomed_again(welcome):
+    bot, store, guild, william, general = welcome
+    store.approve_guild(guild.id, william.id)
+    run(bot.on_guild_join(guild))
+    assert general.texts() == []
+    [(dm, view)] = william.dms
+    assert "réinvité" in dm and view is None
+
+
+def test_william_is_told_when_the_bot_is_removed(welcome):
+    bot, store, guild, william, general = welcome
+    bot.tree.clear_commands = lambda guild: None
+    run(bot.on_guild_remove(guild))
+    assert "retiré du serveur **Ligue LHJMQ**" in william.dms[0][0]
+
+
+def test_only_william_can_connect_shm(shm_league):
+    bot, store, guild, william, channel, roles, site = shm_league
+    bot.owner_name = "william"
+    server_admin = admin_of(guild)
+
+    async def scenario():
+        panel = (await open_panel(bot, guild, server_admin)).view
+        await click(panel, button(panel, "options"), FakeInteraction(guild, server_admin))
+        opened = await click(panel, button(panel, "shm"), FakeInteraction(guild, server_admin))
+        # Même avec une vieille fenêtre ouverte, l'envoi est revérifié.
+        direct = FakeInteraction(guild, server_admin)
+        await bot_module.setup_shm(bot, direct, "lnhs_2", channel)
+        stop = FakeInteraction(guild, server_admin)
+        await bot_module.setup_shm(bot, stop, "", channel)
+        return opened, direct, stop
+    store.set_shm_league(guild.id, "lnhs_2")
+    opened, direct, stop = run(scenario())
+    assert opened.response.modal is None and "seulement par **william**" in opened.last
+    assert "seulement par **william**" in direct.last and "seulement par **william**" in stop.last
+    assert store.shm_league(guild.id) == "lnhs_2" and site.requests == []
+    # William, lui, branche la ligue normalement.
+    i, _ = run(setup_shm_from_panel(bot, guild, william, channel, "lnhs_2"))
+    assert "C'est branché" in i.last

@@ -118,12 +118,24 @@ Un choix peut aussi être échangé plus tard avec **Échanger un choix**.
 
 Réimporter la liste ou redéfinir l'ordre remet le draft à zéro. Le bot le dit, demande une confirmation et fait une sauvegarde avant.
 
+## Nouveaux serveurs : tout passe par le créateur du bot
+
+N'importe qui peut inviter le bot, mais c'est le créateur du bot (le propriétaire de l'application Discord) qui configure chaque ligue :
+
+- **Quand un serveur invite le bot**, le bot écrit un mot de bienvenue dans ce serveur (le salon des messages système, sinon le premier salon où il peut écrire) : la configuration se fait avec le créateur du bot, qui a été prévenu, et comment le joindre (lien `SUPPORT_URL` s'il est rempli).
+- **Le créateur reçoit un message privé « Nouveau client! »** : nom du serveur, nombre de membres, propriétaire du serveur, qui a ajouté le bot (si le bot peut lire le journal du serveur) et un lien de 7 jours pour rejoindre le serveur (si le bot peut créer une invitation), avec un bouton **✅ Activer ce serveur**.
+- **Tant que le serveur n'est pas activé**, `/admin` montre seulement ce message aux admins du serveur. Le créateur active le serveur avec le bouton du message privé, ou en faisant `/admin` dans ce serveur (il lui faut alors la permission « Gérer le serveur » là-bas) : le panneau s'ouvre aussitôt. `/draft`, `/statut`, `/roue` et `/aide` ne sont pas bloqués.
+- **Annonces SHM** (transactions, ballottage, rachats, classement) : seul le créateur du bot peut les brancher, les changer ou les arrêter (bouton **Annonces SHM auto**). Les admins du serveur voient un message qui leur dit de le contacter.
+- Les serveurs où le bot était déjà au premier démarrage de cette version sont activés tout seuls, une seule fois. Un serveur qui invite le bot pendant qu'il est éteint est accueilli au démarrage suivant. Le créateur est aussi prévenu quand un serveur retire le bot ou le réinvite.
+
+Pour savoir qui a ajouté le bot et recevoir un lien d'invitation, ajouter au lien d'invitation public les permissions *Voir les logs du serveur* et *Créer une invitation* (facultatif : sans elles, le message privé le dit, et il suffit de leur demander un lien).
+
 ## Fiabilité
 
 - **Un choix à la fois** : le bot revérifie, au moment du clic sur Confirmer, que c'est encore le tour de ce choix, que le membre a encore le rôle et que le joueur est encore disponible. Deux confirmations en même temps ne peuvent pas prendre le même joueur ni sauter un tour.
 - **Rien ne se perd au redémarrage** : le draft, le chrono et le journal sont dans la base `draft.db`. Une alerte de délai manquée pendant que le bot était éteint part dès son retour.
 - **Sauvegardes automatiques** dans le dossier `sauvegardes` : au démarrage, chaque heure, et avant chaque import de joueurs ou nouvel ordre. Les 48 plus récentes sont gardées. Pour revenir en arrière, arrêter le bot, remplacer `draft.db` par une sauvegarde renommée `draft.db`, puis relancer.
-- **Plusieurs serveurs** : le bot marche sur tout serveur où il est invité, sans rien modifier. Chaque serveur a son propre draft. Les commandes sont publiées serveur par serveur (au démarrage et dès qu'il arrive sur un nouveau serveur), et les anciennes commandes globales sont effacées pour éviter les doublons. Le bot étant privé (*Public Bot* décoché), seul son propriétaire peut l'inviter.
+- **Plusieurs serveurs** : le bot marche sur tout serveur où il est invité, sans rien modifier. Chaque serveur a son propre draft. Les commandes sont publiées serveur par serveur (au démarrage et dès qu'il arrive sur un nouveau serveur), et les anciennes commandes globales sont effacées pour éviter les doublons. Avec *Public Bot* décoché, seul son propriétaire peut l'inviter ; coché, n'importe qui peut l'inviter, et chaque nouveau serveur doit être activé par le créateur du bot (voir « Nouveaux serveurs »).
 
 ## Installation
 
