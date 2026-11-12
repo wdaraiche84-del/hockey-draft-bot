@@ -60,6 +60,10 @@ SHM_CHECK_MINUTES = 5
 SHM_MAX_PAGES = 3
 # Les admins sont prévenus dans le salon quand SHM ne répond plus depuis une heure.
 SHM_WARN_SECONDS = 3600
+# Le lien d'invitation créé pour le propriétaire du bot dure 7 jours.
+OWNER_INVITE_SECONDS = 7 * 24 * 3600
+# Réglage : les serveurs où le bot était déjà avant l'activation par le propriétaire ont été activés.
+APPROVALS_READY = "serveurs_existants_actives"
 
 
 class ShmStatus:
@@ -73,9 +77,15 @@ class ShmStatus:
 
 
 class DraftBot(discord.Client):
-    def __init__(self, store: Store, backup_dir: Path, shm_client: shm.ShmClient | None = None):
+    def __init__(self, store: Store, backup_dir: Path, shm_client: shm.ShmClient | None = None,
+                 support_url: str = ""):
         super().__init__(intents=discord.Intents.default())
         self.store = store
+        # Le propriétaire du bot (lu chez Discord au démarrage) : lui seul active un serveur et branche SHM.
+        self.owner_ids: set[int] = set()
+        self.owner_name = ""
+        # Lien vers le serveur de support (variable SUPPORT_URL), montré aux nouveaux serveurs.
+        self.support_url = support_url.strip()
         self.backup_dir = backup_dir
         # Le compte SHM du bot, ou None s'il n'est pas configuré (SHM_USERNAME et SHM_PASSWORD).
         self.shm = shm_client
@@ -100,6 +110,9 @@ class DraftBot(discord.Client):
     async def setup_hook(self) -> None:
         # Les boutons « Faire mon choix » déjà publiés répondent dès le démarrage.
         self.add_view(PickButtonView(self))
+        # Le bouton « Activer ce serveur » du message privé marche encore après un redémarrage.
+        self.add_dynamic_items(ApproveServerButton)
+        await self.load_owner()
         await self.clear_global_commands()
         self.backup("demarrage")
         self.check_timers.start()
@@ -154,18 +167,133 @@ class DraftBot(discord.Client):
 
     async def on_ready(self) -> None:
         log.info("Connecté en tant que %s sur %d serveur(s)", self.user, len(self.guilds))
+        self.approve_existing_guilds()
         await self.sync_all_guilds()
         log.info("Commandes publiées sur %d serveur(s).", len(self.synced_guilds))
+        # Un serveur qui a invité le bot pendant qu'il était éteint est accueilli maintenant.
+        for guild in list(self.guilds):
+            if not self.store.is_approved(guild.id) and not self.store.was_notified(guild.id):
+                await self.welcome_guild(guild)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         log.info("Nouveau serveur : %s (%s)", guild.name, guild.id)
         await self.sync_guild(guild)
+        if self.store.is_approved(guild.id):
+            await self.dm_owner(f"🔁 **{escape_markdown(guild.name)}** a réinvité le bot. Ce serveur était déjà "
+                                "activé : son draft et ses réglages sont encore là.")
+        else:
+            await self.welcome_guild(guild)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         # Le draft du serveur reste dans la base : s'il réinvite le bot, tout est encore là.
         log.info("Le bot a été retiré du serveur %s (%s)", guild.name, guild.id)
         self.synced_guilds.discard(guild.id)
         self.tree.clear_commands(guild=guild)
+        await self.dm_owner(f"👋 Le bot a été retiré du serveur **{escape_markdown(guild.name)}**.")
+
+    # Le propriétaire du bot et les nouveaux serveurs
+
+    async def load_owner(self) -> None:
+        """Lit chez Discord à qui appartient le bot (le compte qui l'a créé, ou le chef de son équipe)."""
+        try:
+            info = await self.application_info()
+        except discord.HTTPException:
+            log.warning("Impossible de savoir à qui appartient le bot : les nouveaux serveurs ne pourront "
+                        "pas être activés avant le prochain démarrage.")
+            return
+        owner = info.team.owner if info.team and info.team.owner else info.owner
+        if info.team and info.team.owner_id:
+            self.owner_ids = {info.team.owner_id}
+        elif owner:
+            self.owner_ids = {owner.id}
+        self.owner_name = owner.name if owner else ""
+        log.info("Propriétaire du bot : %s", self.owner_name or "inconnu")
+
+    def is_owner_id(self, user_id: int) -> bool:
+        return user_id in self.owner_ids
+
+    def approve_existing_guilds(self) -> None:
+        """Une seule fois, au premier démarrage avec l'activation : les serveurs où le bot est déjà
+        (les ligues qui l'utilisent aujourd'hui) restent utilisables sans rien faire."""
+        if self.store.setting(APPROVALS_READY):
+            return
+        for guild in self.guilds:
+            self.store.approve_guild(guild.id, None)
+        self.store.set_setting(APPROVALS_READY, "1")
+        log.info("Serveurs déjà présents activés : %d", len(self.guilds))
+
+    def contact_text(self) -> str:
+        """Comment joindre le propriétaire du bot, pour les membres d'un serveur."""
+        who = f"**{escape_markdown(self.owner_name)}**" if self.owner_name else "le créateur du bot"
+        if self.support_url:
+            return f"Pour joindre {who} : {self.support_url} (ou en message privé sur Discord)."
+        return f"Pour joindre {who} : écrivez-lui en message privé sur Discord."
+
+    def welcome_text(self) -> str:
+        who = f"**{escape_markdown(self.owner_name)}**" if self.owner_name else "le créateur du bot"
+        return (f"👋 **Merci d'avoir ajouté {self.user.name if self.user else 'le bot'}!**\n"
+                f"La configuration (draft, annonces SHM, classement) se fait directement avec {who}, "
+                "le créateur du bot. Il a été prévenu et va vous contacter.\n"
+                f"{self.contact_text()}")
+
+    async def welcome_guild(self, guild: discord.Guild) -> None:
+        """Un nouveau serveur : un mot de bienvenue chez eux, et « Nouveau client » au propriétaire."""
+        self.store.mark_notified(guild.id)
+        channel = welcome_channel(guild)
+        if channel is not None:
+            try:
+                await channel.send(self.welcome_text(), allowed_mentions=NO_PINGS)
+            except discord.HTTPException:
+                log.warning("Message de bienvenue refusé sur le serveur %s", guild.id)
+        await self.dm_owner(await self.new_client_text(guild, channel is not None),
+                            view=approve_view(guild.id))
+
+    async def new_client_text(self, guild: discord.Guild, welcomed: bool) -> str:
+        lines = [f"🔔 **Nouveau client!** Le bot vient d'être ajouté au serveur **{escape_markdown(guild.name)}**."]
+        if guild.member_count:
+            lines.append(f"👥 Membres : {guild.member_count}")
+        owner = await self.find_user(guild.owner_id)
+        if owner:
+            lines.append(f"👑 Propriétaire du serveur : **{escape_markdown(owner.name)}**")
+        adder = await find_inviter(guild, self.user)
+        lines.append(f"🙋 Ajouté par : **{escape_markdown(adder.name)}**" if adder else
+                     "🙋 Ajouté par : inconnu (le bot n'a pas la permission de voir le journal du serveur)")
+        invite = await create_invite(guild)
+        lines.append(f"🔗 Pour rejoindre leur serveur : {invite}" if invite else
+                     "🔗 Pas de lien pour rejoindre leur serveur (le bot n'a pas la permission de créer "
+                     "une invitation) : demande-leur un lien.")
+        if not welcomed:
+            lines.append("⚠️ Le bot n'a pu écrire dans aucun salon de leur serveur : ils n'ont pas reçu "
+                         "le message de bienvenue.")
+        lines.append("\nVa les voir pour configurer leur ligue. Le panneau `/admin` reste bloqué chez eux "
+                     "tant que tu n'as pas cliqué sur **Activer ce serveur** (ici, ou dans `/admin` chez eux).")
+        return "\n".join(lines)
+
+    async def find_user(self, user_id: int | None) -> discord.abc.User | None:
+        if not user_id:
+            return None
+        user = self.get_user(user_id)
+        if user is not None:
+            return user
+        try:
+            return await self.fetch_user(user_id)
+        except discord.HTTPException:
+            return None
+
+    async def dm_owner(self, text: str, view: discord.ui.View | None = None) -> bool:
+        """Envoie un message privé au propriétaire du bot. Rend False si c'est impossible."""
+        for owner_id in self.owner_ids:
+            owner = await self.find_user(owner_id)
+            if owner is None:
+                continue
+            try:
+                kwargs = {"view": view} if view is not None else {}
+                await owner.send(text, allowed_mentions=NO_PINGS, **kwargs)
+                return True
+            except discord.HTTPException:
+                log.warning("Message privé au propriétaire du bot refusé (messages privés fermés ?)")
+        log.info("Pas de message privé envoyé au propriétaire du bot : %s", text.splitlines()[0])
+        return False
 
     def channels(self, guild: discord.Guild) -> tuple[discord.TextChannel, discord.TextChannel] | None:
         ids = self.store.get_channels(guild.id)
@@ -586,14 +714,15 @@ class DraftBot(discord.Client):
         """Publie le classement, puis modifie les mêmes messages quand il change (après une simulation)."""
         guild = self.get_guild(guild_id)
         async with self.locks[guild_id]:
-            # Les flèches restent jusqu'à la simulation suivante : elles ne changent que si le classement change.
-            rows = [[title, [list(asdict(row).values()) for row in group]] for title, group in page.groups]
+            # Les flèches ne changent qu'après une vraie simulation (des parties jouées en plus). SHM peut
+            # montrer des équipes à égalité dans un autre ordre d'une fois à l'autre : ce n'est pas un mouvement.
+            games = moves.games_played(page)
             state = self.store.standings_state(guild_id)
             ranks = moves.standing_ranks(page)
-            if state is None:
-                state = {"rows": rows, "ranks": ranks, "moves": {}}
-            elif state["rows"] != rows:
-                state = {"rows": rows, "ranks": ranks, "moves": moves.standing_moves(state["ranks"], ranks)}
+            if state is None or "games" not in state:
+                state = {"games": games, "ranks": ranks, "moves": {}}
+            elif games != state["games"]:
+                state = {"games": games, "ranks": ranks, "moves": moves.standing_moves(state["ranks"], ranks)}
             self.store.set_standings_state(guild_id, state)
             chunks = moves.standings(page, guild_emojis(guild), state["moves"])
             old_channel_id, old = self.store.standings_messages(guild_id)
@@ -783,6 +912,96 @@ async def ask_confirmation(interaction: discord.Interaction, question: str,
 
 async def read_attachment(attachment: discord.Attachment) -> str:
     return fmt.decode(await attachment.read())
+
+
+def welcome_channel(guild: discord.Guild) -> discord.TextChannel | None:
+    """Le salon pour le mot de bienvenue : celui des messages système, sinon le premier où le bot peut écrire."""
+    candidates = [guild.system_channel] if guild.system_channel else []
+    candidates += sorted(getattr(guild, "text_channels", []), key=lambda c: c.position)
+    for channel in candidates:
+        if bot_can_post(channel, guild):
+            return channel
+    return None
+
+
+async def find_inviter(guild: discord.Guild, bot_user) -> discord.abc.User | None:
+    """Qui a ajouté le bot, d'après le journal du serveur (si le bot a le droit de le lire)."""
+    if bot_user is None or not guild.me.guild_permissions.view_audit_log:
+        return None
+    try:
+        async for entry in guild.audit_logs(limit=10, action=discord.AuditLogAction.bot_add):
+            if entry.target is not None and entry.target.id == bot_user.id:
+                return entry.user
+    except discord.HTTPException:
+        pass
+    return None
+
+
+async def create_invite(guild: discord.Guild) -> str | None:
+    """Un lien de 7 jours pour que le propriétaire du bot rejoigne le serveur, si le bot en a le droit."""
+    candidates = [guild.system_channel] if guild.system_channel else []
+    candidates += sorted(getattr(guild, "text_channels", []), key=lambda c: c.position)
+    for channel in candidates:
+        if not channel.permissions_for(guild.me).create_instant_invite:
+            continue
+        try:
+            invite = await channel.create_invite(max_age=OWNER_INVITE_SECONDS, unique=False,
+                                                 reason="Pour que le créateur du bot vienne configurer la ligue")
+            return invite.url
+        except discord.HTTPException:
+            continue
+    return None
+
+
+class ApproveServerButton(discord.ui.DynamicItem[discord.ui.Button], template=r"serveur:activer:(?P<guild_id>\d+)"):
+    """« Activer ce serveur » : seul le propriétaire du bot peut cliquer. Marche après un redémarrage."""
+
+    def __init__(self, guild_id: int):
+        super().__init__(discord.ui.Button(label="Activer ce serveur", style=discord.ButtonStyle.success,
+                                           emoji="✅", custom_id=f"serveur:activer:{guild_id}"))
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
+        return cls(int(match["guild_id"]))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.client.is_owner_id(interaction.user.id):
+            return True
+        await reply(interaction, "🔒 Seul le créateur du bot peut activer un serveur.")
+        return False
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot: DraftBot = interaction.client
+        guild = bot.get_guild(self.guild_id)
+        name = f"**{escape_markdown(guild.name)}**" if guild else "Le serveur"
+        newly = bot.store.approve_guild(self.guild_id, interaction.user.id)
+        done = f"✅ {name} est activé : ses admins peuvent maintenant utiliser `/admin`." if newly else \
+            f"✅ {name} était déjà activé."
+        if interaction.guild_id == self.guild_id and interaction.guild is not None:
+            # Cliqué dans /admin chez le client : le panneau s'ouvre tout de suite à la place.
+            panel = AdminPanel(bot, interaction.user.id, self.guild_id)
+            await interaction.response.edit_message(content=f"{done}\n\n{panel.build(interaction.guild)}", view=panel)
+            panel.origin = interaction
+            bot.register_panel(self.guild_id, panel)
+            return
+        original = interaction.message.content if interaction.message else ""
+        await interaction.response.edit_message(content=f"{original}\n\n{done}".strip(), view=None)
+
+
+def approve_view(guild_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(ApproveServerButton(guild_id))
+    return view
+
+
+def not_approved_text(bot: "DraftBot", owner: bool) -> str:
+    if owner:
+        return ("🔒 Ce serveur n'est pas encore activé. Tu es le créateur du bot : clique sur "
+                "**Activer ce serveur** pour ouvrir le panneau ici (aussi pour les admins du serveur).")
+    who = f"**{escape_markdown(bot.owner_name)}**" if bot.owner_name else "le créateur du bot"
+    return (f"🔒 Le bot n'est pas encore activé sur ce serveur. La configuration se fait directement avec {who}, "
+            f"le créateur du bot : il a été prévenu de votre arrivée.\n{bot.contact_text()}")
 
 
 def admin_only(func):
@@ -1681,6 +1900,12 @@ class TradeFixModal(BotModal):
 
 # Transactions SHM automatiques : le bot lit lui-même l'historique des transactions de la ligue sur SHM.
 
+def shm_owner_only(bot: "DraftBot") -> str:
+    who = f"**{escape_markdown(bot.owner_name)}**" if bot.owner_name else "le créateur du bot"
+    return (f"🔒 Les annonces SHM (transactions, ballottage, rachats, classement) sont branchées seulement par {who}, "
+            f"le créateur du bot : il doit relier le compte SHM du bot à votre ligue.\n{bot.contact_text()}")
+
+
 SHM_NOT_CONFIGURED = (
     "⚠️ Le compte SHM du bot n'est pas encore configuré.\n"
     "La personne qui s'occupe du bot doit ajouter `SHM_USERNAME` et `SHM_PASSWORD` (le compte SHM du bot) "
@@ -1728,6 +1953,10 @@ SHM_KIND_NAMES = {"trades": "transactions", "waivers": "ballottage", "buyouts": 
 async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: str,
                     channel: discord.TextChannel | None, others: dict | None = None) -> None:
     guild = interaction.guild
+    # Revérifié à l'envoi de la fenêtre : seul le créateur du bot branche ou arrête SHM.
+    if not bot.is_owner_id(interaction.user.id):
+        await reply(interaction, shm_owner_only(bot))
+        return
     if not address.strip():
         bot.store.set_shm_league(guild.id, None)
         bot.shm_status.pop(guild.id, None)
@@ -2072,6 +2301,9 @@ class AdminPanel(discord.ui.View):
         await undo_last_pick(self.bot, interaction)
 
     async def open_shm(self, interaction: discord.Interaction) -> None:
+        if not self.bot.is_owner_id(interaction.user.id):
+            await reply(interaction, shm_owner_only(self.bot))
+            return
         if self.bot.shm is None:
             await reply(interaction, SHM_NOT_CONFIGURED)
             return
@@ -2116,6 +2348,11 @@ def register_commands(bot: DraftBot) -> None:
     @app_commands.guild_only()
     @admin_only
     async def admin(interaction: discord.Interaction) -> None:
+        if not store.is_approved(interaction.guild_id):
+            owner = bot.is_owner_id(interaction.user.id)
+            kwargs = {"view": approve_view(interaction.guild_id)} if owner else {}
+            await reply(interaction, not_approved_text(bot, owner), **kwargs)
+            return
         panel = AdminPanel(bot, interaction.user.id, interaction.guild_id)
         await reply(interaction, panel.build(interaction.guild), view=panel)
         panel.origin = interaction
@@ -2252,7 +2489,11 @@ def shm_client_from_env(env: dict) -> shm.ShmClient | None:
     if not username or not password:
         raise ConfigError("Il faut SHM_USERNAME et SHM_PASSWORD ensemble dans .env (le compte SHM du bot), "
                           "ou aucun des deux.")
-    return shm.ShmClient(username, password)
+    key = (env.get("SHM_BOT_KEY") or "").strip()
+    if key and not all(33 <= ord(c) < 127 for c in key):
+        raise ConfigError("SHM_BOT_KEY ne doit contenir que des lettres, des chiffres et des signes simples, "
+                          "sans espace ni accent.")
+    return shm.ShmClient(username, password, key=key)
 
 
 def main() -> None:
@@ -2271,7 +2512,7 @@ def main() -> None:
     except ConfigError as error:
         log.error("%s", error)
         raise SystemExit(1)
-    DraftBot(store, backup_dir, shm_client).run(token)
+    DraftBot(store, backup_dir, shm_client, support_url=os.environ.get("SUPPORT_URL", "")).run(token)
 
 
 if __name__ == "__main__":
