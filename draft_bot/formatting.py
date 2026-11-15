@@ -144,7 +144,7 @@ def announcement(pick: Pick, player: Player, forced: bool, team: str | None = No
 def on_the_clock(pick: Pick | None, ping: str, deadline: float | None = None) -> str:
     """« Au tour de … », avec la mention du rôle de l'équipe et le temps limite."""
     if pick is None:
-        return "🏁 Le draft est terminé!"
+        return "🏁 Le draft est terminé !"
     return (
         f"⏱️ Au tour de **{escape_markdown(pick.team)}** {ping} ({pick_label(pick)})"
         + deadline_text(deadline)
