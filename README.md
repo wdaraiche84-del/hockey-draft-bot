@@ -169,6 +169,40 @@ Garder `.env` et `draft.db` : le draft en cours est conservé.
 
 Inviter le bot sur le serveur avec le même lien d'invitation (portées `bot` et `applications.commands`). Les commandes apparaissent en quelques secondes, sans redémarrer ni modifier `.env`. Si elles n'apparaissent pas, le bot a été invité sans la portée `applications.commands` : le réinviter avec le bon lien.
 
+## Hébergement sur un serveur (DigitalOcean ou autre Ubuntu 24.04)
+
+Le dossier `hebergement` installe le bot sur un serveur Ubuntu 24.04 neuf (ex. un Droplet DigitalOcean à 6 $/mois, 1 Go de mémoire). Il est séparé du code du bot.
+
+1. Arrêter le bot sur le PC : un même jeton ne doit tourner qu'à un seul endroit.
+2. Ouvrir la console du serveur (sur DigitalOcean : bouton **Web Console**), puis coller cette commande et appuyer sur Entrée :
+
+```
+curl -fsSL https://raw.githubusercontent.com/wdaraiche84-del/hockey-draft-bot/main/hebergement/installer.sh | bash
+```
+
+3. Le script demande le jeton Discord (il vérifie auprès de Discord qu'il est bon), puis le compte SHM du bot. Ces secrets restent sur le serveur (`/etc/hockey-bot/secrets.env`, lisible seulement par root) : ils ne vont jamais dans GitHub.
+4. Il installe tout, lance les tests, démarre le bot et attend qu'il soit connecté à Discord (5 à 10 minutes la première fois).
+
+Ce que le serveur fait ensuite tout seul :
+
+- **Mises à jour** : toutes les 3 minutes, il regarde si `main` a changé. Une nouvelle version est copiée à côté de l'ancienne, tous les tests sont lancés, puis le bot redémarre dessus. Si un test échoue, la version est refusée et le bot n'est pas touché. Si le bot ne se connecte pas à Discord dans les 2 minutes, le serveur remet tout seul la version d'avant. Une version refusée n'est pas réessayée : il faut une nouvelle PR. Avant chaque changement de version, la base est copiée dans `/data/sauvegardes` (fichiers `avant-maj_…`, les 10 plus récents sont gardés).
+- **Revenir en arrière** depuis le téléphone : sur GitHub, ouvrir la PR fusionnée et cliquer **Revert**, puis fusionner la PR créée. Le serveur installe la version d'avant en quelques minutes.
+- Le bot redémarre s'il plante et quand le serveur redémarre. La base du draft et ses sauvegardes sont dans `/data`.
+- Fuseau horaire America/Toronto, mémoire d'appoint de 2 Go, pare-feu (seul SSH entre), fail2ban, mises à jour de sécurité d'Ubuntu chaque jour (redémarrage à 5 h seulement si une mise à jour l'exige).
+
+Commandes sur le serveur (taper `bot` pour la liste) :
+
+| Commande | Rôle |
+| --- | --- |
+| `bot etat` | Le bot marche-t-il ? Sa version, la dernière mise à jour et ses derniers messages |
+| `bot journal` | Voir ce que fait le bot en direct (Ctrl+C pour sortir) |
+| `bot redemarrer` | Redémarrer le bot |
+| `bot secrets` | Changer le jeton Discord ou le compte SHM du bot |
+| `bot retour` | Revenir tout de suite à la version d'avant ; les mises à jour automatiques se mettent en pause |
+| `bot reprendre` | Relancer les mises à jour automatiques et installer la dernière version |
+
+Relancer la commande d'installation est sans danger : elle garde les secrets et la base, et met à jour les outils du serveur.
+
 ## Hébergement sur Railway
 
 Le dépôt est prêt pour Railway : `railway.json` donne la commande de démarrage (`python -m draft_bot`) et redémarre le bot s'il plante, et `.python-version` fixe Python 3.12.

@@ -1,0 +1,11 @@
+# Toutes les 3 minutes : y a-t-il une nouvelle version du bot sur GitHub ?
+[Unit]
+Description=Vérifier les mises à jour du bot toutes les 3 minutes
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/3
+RandomizedDelaySec=20s
+
+[Install]
+WantedBy=timers.target
