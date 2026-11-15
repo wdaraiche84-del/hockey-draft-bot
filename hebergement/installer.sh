@@ -62,8 +62,10 @@ echo 'vm.swappiness=10' > /etc/sysctl.d/90-hockey-bot.conf
 sysctl -q -p /etc/sysctl.d/90-hockey-bot.conf || true
 
 etape "3/8 Logiciels nécessaires (1 à 3 minutes)"
-apt-get update -q
-apt-get install -y -q git curl ca-certificates python3 python3-venv libglib2.0-0t64 libgomp1 \
+# Sur un serveur neuf, Ubuntu fait souvent ses propres mises à jour au premier démarrage :
+# on attend qu'il ait fini (jusqu'à 10 minutes) au lieu d'échouer.
+apt-get -o DPkg::Lock::Timeout=600 update -q
+apt-get -o DPkg::Lock::Timeout=600 install -y -q git curl ca-certificates python3 python3-venv libglib2.0-0t64 libgomp1 \
     ufw fail2ban unattended-upgrades > /dev/null
 echo "Fait."
 

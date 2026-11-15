@@ -48,14 +48,26 @@ demander() {   # demander "question" cache(0/1) → réponse dans $REPONSE
     printf '%s' "$1" > /dev/tty
     if [ "$2" = 1 ]; then IFS= read -rs REPONSE < /dev/tty; echo > /dev/tty; else IFS= read -r REPONSE < /dev/tty; fi
     REPONSE=$(printf '%s' "$REPONSE" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    # Si toute la ligne du fichier .env du PC a été copiée (ex. DISCORD_TOKEN=abc), on garde la valeur.
+    local nom
+    for nom in DISCORD_TOKEN SHM_USERNAME SHM_PASSWORD SHM_BOT_KEY; do REPONSE=${REPONSE#"$nom="}; done
 }
 
-# Demande à Discord à quel bot appartient ce jeton. Affiche son nom, ou rien si le jeton est mauvais.
-nom_du_bot() {
-    curl -s --max-time 15 -H "Authorization: Bot $1" https://discord.com/api/v10/users/@me \
-        | python3 -c 'import json,sys
+# Demande à Discord à quel bot appartient ce jeton. Affiche « OK nom », « REFUSE » (mauvais jeton)
+# ou « INJOIGNABLE » (Discord ne répond pas). Le jeton passe par l'entrée standard de curl,
+# pas par sa ligne de commande : il n'apparaît pas dans la liste des programmes.
+verifier_jeton() {
+    local reponse code
+    reponse=$(printf 'Authorization: Bot %s\n' "$1" | curl -s --max-time 15 -H @- -w '\n%{http_code}' \
+        https://discord.com/api/v10/users/@me 2>/dev/null) || true
+    code=$(tail -n 1 <<< "$reponse")
+    case "$code" in
+        200) echo "OK $(head -n -1 <<< "$reponse" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("username",""))
-except Exception: pass' 2>/dev/null
+except Exception: pass' 2>/dev/null)" ;;
+        401|403) echo "REFUSE" ;;
+        *) echo "INJOIGNABLE" ;;
+    esac
 }
 
 secrets() {
@@ -78,8 +90,12 @@ secrets() {
         if [ -z "$REPONSE" ] && [ -n "$jeton" ]; then break; fi
         if [ -z "$REPONSE" ]; then rouge "   Rien n'a été collé. Réessaie (clic droit > Coller, ou Ctrl+Shift+V)."; continue; fi
         echo "   Vérification auprès de Discord…"
-        nom=$(nom_du_bot "$REPONSE")
-        if [ -n "$nom" ]; then vert "   ✅ Jeton bon : c'est le bot « $nom »."; jeton=$REPONSE; break; fi
+        nom=$(verifier_jeton "$REPONSE")
+        case "$nom" in
+            OK*) vert "   ✅ Jeton bon : c'est le bot « ${nom#OK } »."; jeton=$REPONSE; break ;;
+            INJOIGNABLE) echo "   Discord ne répond pas pour l'instant : le jeton est gardé tel quel, le bot le vérifiera en démarrant."
+                         jeton=$REPONSE; break ;;
+        esac
         rouge "   ❌ Discord refuse ce jeton (${#REPONSE} caractères reçus). Recopie-le et réessaie."
     done
 
@@ -124,6 +140,9 @@ secrets() {
 }
 
 redemarrer() {
+    # Attend qu'une mise à jour en cours soit finie, pour ne pas redémarrer le bot en plein milieu.
+    exec 9> /run/hockey-bot-maj.lock
+    flock -w 900 9 || { rouge "Une mise à jour est en cours : réessaie dans quelques minutes."; return 1; }
     echo "Redémarrage du bot…"
     local depart; depart=$(date +%s)
     systemctl restart "$SERVICE"

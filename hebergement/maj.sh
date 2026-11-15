@@ -60,7 +60,7 @@ preparer() {
     if [ ! -x "$venv/bin/python" ] || [ ! -f "$venv/.pret" ]; then
         journal "Installation des bibliothèques Python (quelques minutes)…"
         rm -rf "$venv"
-        python3 -m venv "$venv" || return 1
+        python3 -m venv "$venv" || { rm -rf "$venv"; return 1; }
         "$venv/bin/pip" install --quiet --disable-pip-version-check --upgrade pip \
             && "$venv/bin/pip" install --quiet --disable-pip-version-check -r "$dossier/requirements.txt" pytest \
             || { journal "Échec de l'installation des bibliothèques."; rm -rf "$venv"; return 1; }
@@ -102,6 +102,23 @@ demarrer_et_verifier() {
     return 1
 }
 
+# Copie de la base avant chaque changement de version, bot arrêté (copie sûre). Garde les 10 dernières.
+sauvegarder_base() {
+    [ -f /data/draft.db ] || return 0
+    local dossier=/data/sauvegardes
+    systemctl stop "$SERVICE"
+    install -d -o "$UTILISATEUR" -g "$UTILISATEUR" -m 700 "$dossier"
+    local nom
+    nom="$dossier/avant-maj_$(date +%Y-%m-%d_%Hh%M)_$1.db"
+    if cp -p /data/draft.db "$nom"; then
+        chown "$UTILISATEUR:$UTILISATEUR" "$nom"
+        journal "Base sauvegardée : $nom"
+    else
+        journal "Attention : la base n'a pas pu être sauvegardée avant la mise à jour."
+    fi
+    ls -1t "$dossier"/avant-maj_*.db 2>/dev/null | tail -n +11 | xargs -r rm -f
+}
+
 basculer() { ln -sfn "$VERSIONS/$1" "$ACTUELLE.tmp" && mv -T "$ACTUELLE.tmp" "$ACTUELLE"; }
 
 nettoyer() {   # Garde la version actuelle et celle d'avant (pour « bot retour »), et leurs environnements Python.
@@ -118,6 +135,13 @@ nettoyer() {   # Garde la version actuelle et celle d'avant (pour « bot retour 
 }
 
 deployer() {
+    deployer_version "$@"
+    local code=$?
+    nettoyer
+    return $code
+}
+
+deployer_version() {
     local sha=$1 precedente
     precedente=$(version_actuelle)
     journal "Nouvelle version trouvée : ${sha:0:7} « $(titre_version "$sha") »"
@@ -132,12 +156,12 @@ deployer() {
         return 1
     fi
     journal "Tests réussis. Redémarrage du bot sur la nouvelle version…"
+    sauvegarder_base "${sha:0:7}"
     basculer "$sha"
     if demarrer_et_verifier; then
         [ -n "$precedente" ] && [ "$precedente" != "$sha" ] && echo "$precedente" > "$ETAT/precedente"
         rm -f "$ETAT/refusee"
         resultat "✅ Bot à jour : version ${sha:0:7} « $(titre_version "$sha") »."
-        nettoyer
         return 0
     fi
     if [ -z "$precedente" ] || [ "$precedente" = "$sha" ]; then
@@ -168,6 +192,7 @@ retour() {
     local mauvaise
     mauvaise=$(version_actuelle)
     touch "$CONFIG/pause"
+    sauvegarder_base "retour"
     basculer "$precedente"
     echo "$mauvaise" > "$ETAT/precedente"
     if demarrer_et_verifier; then
