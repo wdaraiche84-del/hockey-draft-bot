@@ -203,11 +203,41 @@ retour() {
     fi
 }
 
+# Les réglages du serveur (hebergement/reglages.sh) de la version installée, appliqués tout seuls
+# quand ils changent : plus besoin de recoller la commande d'installation. Ne relance jamais le bot.
+# En cas d'échec, nouvel essai au prochain passage (noté une seule fois dans l'historique).
+appliquer_reglages() {
+    local dossier empreinte sortie
+    dossier=$(readlink -f "$ACTUELLE" 2>/dev/null)/hebergement
+    [ -f "$dossier/reglages.sh" ] || return 0
+    empreinte=$(cd "$dossier" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+    [ "$empreinte" = "$(cat "$ETAT/reglages-appliques" 2>/dev/null)" ] && return 0
+    if sortie=$(bash "$dossier/reglages.sh" "$dossier" 2>&1); then
+        echo "$empreinte" > "$ETAT/reglages-appliques"
+        rm -f "$ETAT/reglages-echec"
+        journal "$(tail -n 2 <<< "$sortie" | tr '\n' ' ')"
+        return 0
+    fi
+    if [ "$empreinte" != "$(cat "$ETAT/reglages-echec" 2>/dev/null)" ]; then
+        echo "$empreinte" > "$ETAT/reglages-echec"
+        resultat "❌ Réglages du serveur pas appliqués (nouvel essai toutes les 3 minutes) : $(tail -n 2 <<< "$sortie" | tr '\n' ' ')"
+    fi
+    return 1
+}
+
 principal() {
     mkdir -p "$ETAT" "$VERSIONS" "$VENVS"
-    local mode=${1:-}
+    local mode=${1:-} code
     if [ "$mode" = "--retour" ]; then retour; return; fi
     if [ "$mode" != "--forcer" ] && [ -f "$CONFIG/pause" ]; then return 0; fi
+    mettre_a_jour "$mode"
+    code=$?
+    appliquer_reglages
+    return $code
+}
+
+mettre_a_jour() {
+    local mode=${1:-}
 
     if ! git --git-dir="$DEPOT" fetch --quiet --prune origin "+refs/heads/$BRANCHE:refs/heads/$BRANCHE" 2>"$ETAT/git.err"; then
         # GitHub ne répond pas : pas grave, on réessaie au prochain passage, sans remplir le journal.
