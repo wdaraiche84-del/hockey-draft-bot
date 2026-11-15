@@ -364,7 +364,7 @@ class DraftBot(discord.Client):
         """
         channels = self.channels(guild)
         if channels is None:
-            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (`/admin`, puis **Plus d'options**, **Changer les salons**)."
+            return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (`/admin`, puis **Draft**, **Plus d'options**, **Changer les salons**)."
         try:
             if with_clock:
                 await self.post_with_clock(guild, channels[1], text)
@@ -384,12 +384,12 @@ class DraftBot(discord.Client):
     async def refresh_panels(self, guild: discord.Guild, actor_id: int | None = None) -> None:
         """Après un changement, les panneaux admin ouverts montrent tout de suite le nouvel état.
 
-        Le panneau de l'admin qui vient d'agir revient à l'écran principal, pour lui montrer
-        la prochaine étape. Celui d'un autre admin reste où il est.
+        Le panneau de l'admin qui vient d'agir quitte les options du draft pour revenir à l'écran
+        du draft, qui montre la prochaine étape. Celui d'un autre admin reste où il est.
         """
         for panel in list(self.panels[guild.id]):
-            if actor_id is not None and panel.user_id == actor_id:
-                panel.more = False
+            if actor_id is not None and panel.user_id == actor_id and panel.screen == OPTIONS_SCREEN:
+                panel.screen = DRAFT_SCREEN
             await panel.refresh(guild)
 
     def backup(self, reason: str) -> None:
@@ -1028,7 +1028,7 @@ async def check_turn(bot: DraftBot, interaction: discord.Interaction, forced: bo
     if not bot.store.is_started(interaction.guild_id):
         text = "Le draft n'est pas encore commencé. Attends l'annonce du début du draft."
         if is_admin(interaction.user):
-            text += f"\n*Admin : le panneau `/admin` montre la prochaine étape, jusqu'à **▶ {LAUNCH_STEP}**.*"
+            text += f"\n*Admin : le panneau `/admin` (bouton **{DRAFT_BUTTON}**) montre la prochaine étape, jusqu'à **▶ {LAUNCH_STEP}**.*"
         await reply(interaction, text)
         return None
     pick = bot.store.current_pick(interaction.guild_id)
@@ -1120,7 +1120,7 @@ async def finish_pick(bot: DraftBot, interaction: discord.Interaction, number: i
             return
         channels = bot.channels(interaction.guild)
         if channels is None:
-            problems.append("les salons du draft sont introuvables (`/admin`, puis **Plus d'options**, **Changer les salons**)")
+            problems.append("les salons du draft sont introuvables (`/admin`, puis **Draft**, **Plus d'options**, **Changer les salons**)")
         else:
             role = bot.team_role(interaction.guild, pick.team)
             name = role.name if role else None
@@ -2038,7 +2038,7 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
 def shm_text(bot: DraftBot, guild: discord.Guild) -> str:
     slug = bot.store.shm_league(guild.id)
     if not slug:
-        return "désactivées"
+        return "pas activées"
     text = f"ligue `{slug}`"
     status = bot.shm_status.get(guild.id)
     if status and status.error:
@@ -2053,7 +2053,8 @@ def shm_text(bot: DraftBot, guild: discord.Guild) -> str:
     return text + "\n　" + " · ".join(parts)
 
 
-# Le panneau admin : un seul bouton pour la prochaine étape, le reste rangé dans « Plus d'options ».
+# Le panneau de la ligue (/admin) : un menu de départ (Draft, Transactions, Annonces SHM).
+# Dans « Draft » : un seul bouton pour la prochaine étape, le reste rangé dans « Plus d'options ».
 
 # Les étapes de préparation, dans l'ordre : (clé, nom du bouton, explication).
 SETUP_STEPS = [
@@ -2066,6 +2067,10 @@ SETUP_STEPS = [
 ]
 LAUNCH_STEP = "Lancer le draft"
 MORE_OPTIONS = "Plus d'options"
+DRAFT_BUTTON = "Draft"
+MENU_BUTTON = "Menu"
+# Les trois écrans du panneau.
+MENU_SCREEN, DRAFT_SCREEN, OPTIONS_SCREEN = "menu", "draft", "options"
 TRADE_BUTTON = "Annoncer une transaction"
 CHANGE_CHANNELS = "Changer les salons"
 SHM_BUTTON = "Annonces SHM auto"
@@ -2090,9 +2095,9 @@ def panel_phase(bot: DraftBot, guild: discord.Guild) -> str:
 def next_step_hint(bot: DraftBot, guild: discord.Guild) -> str:
     step = missing_setup_step(bot, guild)
     if step is not None:
-        return f"\n👉 Prochaine étape : **{SETUP_STEPS[step][1]}** (dans `/admin`)."
+        return f"\n👉 Prochaine étape : **{SETUP_STEPS[step][1]}** (dans `/admin`, bouton **{DRAFT_BUTTON}**)."
     if not bot.store.is_started(guild.id):
-        return f"\n👉 Dernière étape : **▶ {LAUNCH_STEP}** (dans `/admin`)."
+        return f"\n👉 Dernière étape : **▶ {LAUNCH_STEP}** (dans `/admin`, bouton **{DRAFT_BUTTON}**)."
     return ""
 
 
@@ -2112,14 +2117,43 @@ def missing_roles_warning(bot: DraftBot, guild: discord.Guild) -> list[str]:
             + ". Ces équipes ne pourront pas choisir elles-mêmes."]
 
 
-def panel_text(bot: DraftBot, guild: discord.Guild, more: bool = False) -> str:
+def draft_summary(bot: DraftBot, guild: discord.Guild) -> str:
+    """L'état du draft en quelques mots, pour le menu de la ligue."""
     store = bot.store
-    if more:
+    phase = panel_phase(bot, guild)
+    if phase == "préparation":
+        return f"à préparer (étape {missing_setup_step(bot, guild) + 1} sur {len(SETUP_STEPS) + 1})"
+    if phase == "prêt":
+        return "prêt à lancer"
+    if phase == "en cours":
+        return f"en cours ({store.made_picks_count(guild.id)} choix faits sur {store.pick_count(guild.id)})"
+    return "terminé"
+
+
+def menu_text(bot: DraftBot, guild: discord.Guild) -> str:
+    return "\n".join([
+        "🏒 **Panneau de la ligue**",
+        "Que veux-tu faire?",
+        "",
+        f"🏒 **{DRAFT_BUTTON}** : {draft_summary(bot, guild)}",
+        "📣 **Transactions** : annoncer un échange à partir d'une capture SHM",
+        "🔄 **Annonces SHM** : rachats, ballottages, transactions et classement publiés tout seuls",
+        f"　État : {shm_text(bot, guild)}",
+        "",
+        "Clique sur un bouton ci-dessous.",
+    ])
+
+
+def panel_text(bot: DraftBot, guild: discord.Guild, screen: str = DRAFT_SCREEN) -> str:
+    store = bot.store
+    if screen == MENU_SCREEN:
+        return menu_text(bot, guild)
+    if screen == OPTIONS_SCREEN:
         channels = bot.channels(guild)
         players = store.player_count(guild.id)
         picks = store.pick_count(guild.id)
         return "\n".join([
-            f"⚙️ **{MORE_OPTIONS}**",
+            f"⚙️ **Draft : {MORE_OPTIONS}**",
             "• Salons : " + (f"liste dans {channels[0].mention}, annonces dans {channels[1].mention}"
                              if channels else "pas encore choisis"),
             "• Joueurs : " + (f"{players}, dont {len(store.available_players(guild.id))} encore disponibles"
@@ -2127,7 +2161,6 @@ def panel_text(bot: DraftBot, guild: discord.Guild, more: bool = False) -> str:
             "• Ordre : " + (f"{picks} choix, {store.made_picks_count(guild.id)} déjà faits"
                             if picks else "pas encore défini"),
             f"• Délai : {delay_text(bot, guild)}",
-            f"• Annonces SHM automatiques : {shm_text(bot, guild)}",
             "",
             "Clique sur ce que tu veux faire, ou sur **Retour**.",
         ])
@@ -2180,18 +2213,20 @@ class PanelButton(discord.ui.Button):
 
 
 class AdminPanel(discord.ui.View):
-    """Le panneau ne montre que ce qui sert maintenant :
+    """Le panneau de la ligue. Il s'ouvre sur un menu : Draft, Annoncer une transaction, Annonces SHM.
+
+    L'écran « Draft » ne montre que ce qui sert maintenant :
     - préparation : un seul bouton, celui de la prochaine étape ;
     - prêt : « Lancer le draft » ;
     - en cours : choisir pour l'équipe au tour, annuler le dernier choix ;
-    - toujours : « Plus d'options », qui range tout le reste (rien n'est perdu).
+    - toujours : « Plus d'options », qui range tout le reste (rien n'est perdu), et « Menu ».
     """
 
     def __init__(self, bot: DraftBot, user_id: int, guild_id: int):
         super().__init__(timeout=PANEL_SECONDS)
         self.bot, self.user_id, self.guild_id = bot, user_id, guild_id
         self.origin: discord.Interaction | None = None
-        self.more = False
+        self.screen = MENU_SCREEN
 
     def button(self, key: str) -> PanelButton | None:
         """Le bouton affiché avec cette clé, ou None s'il n'est pas affiché maintenant."""
@@ -2205,16 +2240,21 @@ class AdminPanel(discord.ui.View):
         """Remet les bons boutons pour l'état du draft et retourne le texte du panneau."""
         self.clear_items()
         primary, success, danger = discord.ButtonStyle.primary, discord.ButtonStyle.success, discord.ButtonStyle.danger
-        if self.more:
+        if self.screen == MENU_SCREEN:
+            self.add("draft", DRAFT_BUTTON, self.show_draft, style=primary, emoji="🏒", row=0)
+            # Les transactions se font toute la saison, avant, pendant et après le draft.
+            self.add("transaction", TRADE_BUTTON, self.open_capture, emoji="📣", row=0)
+            self.add("shm", SHM_BUTTON, self.open_shm, emoji="🔄", row=0)
+            return panel_text(self.bot, guild, MENU_SCREEN)
+        if self.screen == OPTIONS_SCREEN:
             self.add("salons", CHANGE_CHANNELS, self.open_channels, emoji="📺", row=0)
             self.add("joueurs", "Changer les joueurs", self.open_players, emoji="📋", row=0)
             self.add("ordre", "Changer l'ordre", self.open_order, emoji="🔢", row=0)
             self.add("delai", "Délai par choix", self.open_delay, emoji="⌛", row=1)
             self.add("echange", "Échanger un choix", self.open_trade, emoji="🔁", row=1)
             self.add("journal", "Journal", self.journal, emoji="📒", row=1)
-            self.add("shm", SHM_BUTTON, self.open_shm, emoji="🔄", row=1)
-            self.add("retour", "Retour", self.back, style=primary, emoji="⬅️", row=2)
-            return panel_text(self.bot, guild, more=True)
+            self.add("retour", "Retour", self.show_draft, style=primary, emoji="⬅️", row=2)
+            return panel_text(self.bot, guild, OPTIONS_SCREEN)
         phase = panel_phase(self.bot, guild)
         if phase == "préparation":
             key, name, _ = SETUP_STEPS[missing_setup_step(self.bot, guild)]
@@ -2228,10 +2268,9 @@ class AdminPanel(discord.ui.View):
         else:
             # Une erreur au dernier choix doit pouvoir être corrigée, même après la fin.
             self.add("annuler", "Annuler le dernier choix", self.undo, style=danger, emoji="↩️", row=0)
-        # Les transactions se font toute la saison, avant, pendant et après le draft.
-        self.add("transaction", TRADE_BUTTON, self.open_capture, emoji="📣", row=1)
         self.add("options", MORE_OPTIONS, self.show_more, emoji="⚙️", row=1)
-        return panel_text(self.bot, guild)
+        self.add("menu", MENU_BUTTON, self.show_menu, emoji="⬅️", row=1)
+        return panel_text(self.bot, guild, DRAFT_SCREEN)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -2262,20 +2301,25 @@ class AdminPanel(discord.ui.View):
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
         await report_error(interaction, error)
 
-    async def show_more(self, interaction: discord.Interaction) -> None:
-        self.more = True
+    async def show(self, interaction: discord.Interaction, screen: str) -> None:
+        self.screen = screen
         await interaction.response.edit_message(content=self.build(interaction.guild), view=self)
 
-    async def back(self, interaction: discord.Interaction) -> None:
-        self.more = False
-        await interaction.response.edit_message(content=self.build(interaction.guild), view=self)
+    async def show_menu(self, interaction: discord.Interaction) -> None:
+        await self.show(interaction, MENU_SCREEN)
+
+    async def show_draft(self, interaction: discord.Interaction) -> None:
+        await self.show(interaction, DRAFT_SCREEN)
+
+    async def show_more(self, interaction: discord.Interaction) -> None:
+        await self.show(interaction, OPTIONS_SCREEN)
 
     async def open_channels(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(ChannelsModal(self.bot, self.bot.store.get_channels(interaction.guild_id)))
 
     async def open_players(self, interaction: discord.Interaction) -> None:
         if not self.bot.channels(interaction.guild):
-            await reply(interaction, f"Choisis d'abord les salons : **{MORE_OPTIONS}**, puis **{CHANGE_CHANNELS}**.")
+            await reply(interaction, f"Choisis d'abord les salons du draft : **{MORE_OPTIONS}**, puis **{CHANGE_CHANNELS}**.")
             return
         await interaction.response.send_modal(PlayersModal(self.bot))
 
@@ -2317,7 +2361,7 @@ class AdminPanel(discord.ui.View):
 
 
 HELP_TEXT = """\
-🏒 **Comment ça marche**
+🏒 **Le draft : comment faire ton choix**
 1. Quand c'est ton tour, le bot mentionne ton équipe dans le salon des annonces.
 2. Clique sur le bouton vert **Faire mon choix** sous ce message.
 3. Choisis ton joueur (ou tape quelques lettres de son nom), puis clique **Confirmer**.
@@ -2327,10 +2371,13 @@ Tu préfères taper ? `/draft` suivi du nom du joueur fonctionne aussi."""
 
 ADMIN_HELP = """
 
-🛠️ **Admins** : `/admin` ouvre le panneau du draft. Il montre un seul bouton à la fois : \
-clique dessus pour passer à l'étape suivante, jusqu'à **▶ Lancer le draft**. Pendant le draft : \
-**Choisir pour l'équipe au tour** et **Annuler le dernier choix**. Tout le reste (échanger un choix, délai, \
-journal, changer les salons, les joueurs ou l'ordre) est dans **Plus d'options**."""
+🛠️ **Admins** : `/admin` ouvre le panneau de la ligue, avec trois boutons :
+• **Draft** : un seul bouton à la fois, clique dessus pour passer à l'étape suivante, jusqu'à \
+**▶ Lancer le draft**. Pendant le draft : **Choisir pour l'équipe au tour** et **Annuler le dernier choix**. \
+Tout le reste (échanger un choix, délai, journal, changer les salons, les joueurs ou l'ordre) est dans \
+**Plus d'options**.
+• **Annoncer une transaction** : envoie une capture de la transaction SHM, le bot l'annonce.
+• **Annonces SHM auto** : rachats, ballottages, transactions et classement publiés tout seuls."""
 
 
 def register_commands(bot: DraftBot) -> None:
@@ -2344,7 +2391,7 @@ def register_commands(bot: DraftBot) -> None:
                           exc_info=error)
         await reply(interaction, explain_error(error))
 
-    @tree.command(name="admin", description="Ouvrir le panneau admin : préparer et gérer le draft")
+    @tree.command(name="admin", description="Ouvrir le panneau de la ligue : draft, transactions, annonces SHM")
     @app_commands.guild_only()
     @admin_only
     async def admin(interaction: discord.Interaction) -> None:
@@ -2358,7 +2405,7 @@ def register_commands(bot: DraftBot) -> None:
         panel.origin = interaction
         bot.register_panel(interaction.guild_id, panel)
 
-    @tree.command(name="aide", description="Comment faire son choix au draft")
+    @tree.command(name="aide", description="Comment utiliser le bot : draft, tirage au sort, panneau de la ligue")
     @app_commands.guild_only()
     async def aide(interaction: discord.Interaction) -> None:
         await reply(interaction, HELP_TEXT + (ADMIN_HELP if is_admin(interaction.user) else ""))

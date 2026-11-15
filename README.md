@@ -20,17 +20,28 @@ Les réponses du bot sont privées : les salons restent propres. Après un choix
 
 | Commande | Qui | Rôle |
 | --- | --- | --- |
-| `/admin` | Admin | Ouvre le panneau admin : préparer et gérer le draft |
-| `/aide` | Tous | Explique en quelques lignes comment faire son choix |
+| `/admin` | Admin | Ouvre le panneau de la ligue : draft, transactions, annonces SHM |
+| `/aide` | Tous | Explique en quelques lignes comment faire son choix (et le panneau de la ligue, pour les admins) |
 | `/statut` | Tous | Qui est au tour, le temps limite et les prochains choix. L'équipe au tour y trouve aussi le bouton **Faire mon choix** |
 | `/draft joueur` | Équipe au tour | Pour ceux qui préfèrent taper : repêcher un joueur par son nom |
 | `/roue choix titre` | Tous | Tirer au sort une option, chances égales (ex. : `ott, stl`, titre `gambrell`). Résultat public et noté au journal |
 
 « Admin » veut dire la permission *Gérer le serveur*, revérifiée à chaque clic. Toute action qui change le draft demande une confirmation par bouton.
 
-### Le panneau `/admin`
+### Le panneau de la ligue (`/admin`)
 
-Le panneau ne montre qu'un seul bouton à la fois : la prochaine chose à faire. Il se met à jour tout seul après chaque changement.
+Le bot ne sert pas qu'au draft : il anime la ligue toute la saison. `/admin` s'ouvre sur un menu avec trois boutons, et l'état de chaque partie :
+
+```
+🏒 Panneau de la ligue
+🏒 Draft : en cours (12 choix faits sur 64)
+📣 Transactions : annoncer un échange à partir d'une capture SHM
+🔄 Annonces SHM : rachats, ballottages, transactions et classement publiés tout seuls
+   État : ligue lnhs_2 (✅ lu il y a 3 min)
+[🏒 Draft] [📣 Annoncer une transaction] [🔄 Annonces SHM auto]
+```
+
+L'écran **Draft** ne montre qu'un seul bouton à la fois : la prochaine chose à faire, avec **⚙️ Plus d'options** et **⬅️ Menu** pour revenir au menu. Le panneau se met à jour tout seul après chaque changement.
 
 **Préparer le draft** (un bouton bleu par étape, dans l'ordre) :
 
@@ -41,13 +52,13 @@ Le panneau ne montre qu'un seul bouton à la fois : la prochaine chose à faire.
 
 **Pendant le draft** : **Choisir pour l'équipe au tour** et **Annuler le dernier choix**.
 
-**Plus d'options** (toujours là) : changer les salons, les joueurs ou l'ordre, **Délai par choix** (`8h`, `90m`, `1h30`, `0` pour aucun, et le rôle à avertir), **Échanger un choix** (numéro du choix + rôle de la nouvelle équipe) et **Journal** (fichier Excel/CSV de toutes les actions). Changer l'ordre pendant un draft le remet à zéro : il faut le relancer.
+**Plus d'options** (toujours là dans l'écran Draft) : changer les salons, les joueurs ou l'ordre, **Délai par choix** (`8h`, `90m`, `1h30`, `0` pour aucun, et le rôle à avertir), **Échanger un choix** (numéro du choix + rôle de la nouvelle équipe) et **Journal** (fichier Excel/CSV de toutes les actions). Changer l'ordre pendant un draft le remet à zéro : il faut le relancer.
 
 Le panneau se ferme après 14 minutes (limite de Discord) : refaire `/admin` pour le rouvrir.
 
 ### Annoncer une transaction
 
-Le bouton **📣 Annoncer une transaction** est toujours dans `/admin`, avant, pendant et après le draft.
+Le bouton **📣 Annoncer une transaction** est dans le menu de `/admin`, avant, pendant et après le draft.
 
 1. Faire une capture d'écran du tableau des transactions de SHM (colonnes « Vers » et « Éléments », avec les logos). Une partie du tableau suffit.
 2. Cliquer sur **Annoncer une transaction**, ajouter la capture et choisir le salon des annonces de transactions (le bot s'en souvient).
@@ -72,7 +83,7 @@ Si le serveur a une emote pour une équipe, le bot la met devant le nom de l'éq
 Le bot peut aussi lire lui-même les transactions sur SHM et les annoncer sans que personne n'ait rien à faire.
 
 1. Le bot a son propre compte SHM (voir `SHM_USERNAME` et `SHM_PASSWORD` dans l'installation). Le commissaire de la ligue ajoute ce compte comme **membre de sa ligue, sans équipe**.
-2. Dans `/admin` : **Plus d'options**, puis **🔄 Annonces SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir un salon pour chaque sorte d'annonce : transactions (obligatoire), ballottage, rachats et classement. Le même salon peut servir pour plusieurs. Laisser un salon vide arrête cette sorte d'annonce ; quand on la rallume, seul ce qui arrive ensuite est annoncé.
+2. Dans le menu de `/admin` : **🔄 Annonces SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir un salon pour chaque sorte d'annonce : transactions (obligatoire), ballottage, rachats et classement. Le même salon peut servir pour plusieurs. Laisser un salon vide arrête cette sorte d'annonce ; quand on la rallume, seul ce qui arrive ensuite est annoncé.
 3. Le bot essaie tout de suite : s'il ne voit pas la ligue, il le dit et ne change rien. S'il la voit, les transactions déjà sur SHM ne sont **pas** réannoncées : seules les suivantes le seront.
 
 Ensuite, le bot regarde la page **Historique des transactions** de la ligue toutes les 5 minutes et annonce chaque nouvelle transaction, de la plus ancienne à la plus récente, dans le même format que les captures. Une transaction déjà annoncée avec une capture n'est pas répétée, et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
@@ -89,7 +100,7 @@ Le bot annonce aussi les **rachats** (💸 l'équipe, le joueur et le salaire du
 
 Le bot peut aussi publier le **classement** de la ligue (Association de l'Est et de l'Ouest) dans un salon, avec une flèche 🟢 ▲ ou 🔴 ▼ pour les places gagnées ou perdues depuis la simulation d'avant. Il modifie ensuite le même message quand le classement change sur SHM, donc après chaque simulation : le salon reste propre. Si le message est effacé à la main, il est republié ; si on change de salon, l'ancien est effacé.
 
-**Plus d'options** montre l'état : la ligue suivie, le salon de chaque annonce et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
+Le menu de `/admin` montre l'état : la ligue suivie, le salon de chaque annonce et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
 
 Le bot se présente à SHM dans chaque requête (en-têtes `User-Agent` et `X-Bot` : nom, version et compte SHM du bot), pour que les admins de SHM le reconnaissent. Si les admins de SHM veulent laisser passer le bot dans Cloudflare, on convient avec eux d'une clé secrète, mise dans la variable `SHM_BOT_KEY` : le bot l'envoie dans l'en-tête `X-Bot-Key`, et leur règle Cloudflare laisse passer les requêtes qui ont cette clé (plus sûr que le User-Agent, que n'importe qui peut copier). Il demande au plus une page SHM toutes les 2 secondes (d’habitude 3 pages par ligue toutes les 5 minutes), et une ligue suivie par plusieurs serveurs n'est lue qu'une fois. Si SHM refuse le mot de passe, le bot n'insiste pas (nouvel essai après 30 minutes), pour ne pas faire bloquer le compte.
 
@@ -105,7 +116,7 @@ Mario Lemieux;Laval;C
 
 ### Ordre avec des choix échangés
 
-Dans **Définir l'ordre du draft** (ou **Plus d'options**, **Changer l'ordre**), écrire tous les choix du draft dans l'ordre, une équipe par ligne, et mettre **1** ronde. Les choix échangés sont simplement écrits au nom de leur nouveau propriétaire.
+Dans **Définir l'ordre du draft** (ou **Draft**, **Plus d'options**, **Changer l'ordre**), écrire tous les choix du draft dans l'ordre, une équipe par ligne, et mettre **1** ronde. Les choix échangés sont simplement écrits au nom de leur nouveau propriétaire.
 
 ```
 Laval

@@ -264,9 +264,13 @@ def fill(modal, **values):
     return modal
 
 
-async def open_panel(bot, guild, admin):
+async def open_panel(bot, guild, admin, draft=True):
+    """Tape /admin. Le panneau s'ouvre sur le menu de la ligue ; avec draft=True, clique aussi sur « Draft »."""
     i = await command(bot, "admin", FakeInteraction(guild, admin))
     assert isinstance(i.view, AdminPanel)
+    assert keys(i.view) == ["draft", "transaction", "shm"] and "Panneau de la ligue" in i.last
+    if draft:
+        await click(i.view, button(i.view, "draft"), i)
     return i
 
 
@@ -581,6 +585,73 @@ def test_wheel_rejects_bad_options(league):
 
 # Le panneau /admin
 
+def test_admin_opens_on_the_league_menu_not_only_the_draft(league):
+    bot, store, guild, _, _, _ = league
+    admin = admin_of(guild)
+    description = next(c for c in bot.tree.get_commands() if c.name == "admin").description
+    assert "ligue" in description and "transactions" in description and "SHM" in description
+
+    async def scenario():
+        panel_i = await open_panel(bot, guild, admin, draft=False)
+        panel = panel_i.view
+        menu = panel_i.last
+        draft = await click(panel, button(panel, "draft"), FakeInteraction(guild, admin))
+        assert keys(panel) == ["choisir", "annuler", "options", "menu"]
+        await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
+        assert keys(panel) == ["choisir", "annuler", "options", "menu"]  # « Retour » revient au draft
+        back = await click(panel, button(panel, "menu"), FakeInteraction(guild, admin))
+        trade = await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
+        return menu, draft.last, back.last, trade
+    menu, draft, back, trade = run(scenario())
+    assert "Panneau de la ligue" in menu and "Draft** : en cours (0 choix faits sur 4)" in menu
+    assert "Transactions" in menu and "rachats, ballottages" in menu and "État : pas activées" in menu
+    assert "draft est en cours" in draft and back == menu
+    # Le bouton du menu ouvre bien la fenêtre de capture (ou explique que la lecture n'est pas installée).
+    assert isinstance(trade.response.modal, CaptureModal) or trade.last == bot_module.NOT_INSTALLED
+
+
+def test_menu_shows_where_the_draft_is_at(empty_league):
+    bot, store, guild, admin, liste, selections = empty_league
+
+    def menu():
+        return run(open_panel(bot, guild, admin, draft=False)).last
+
+    assert "Draft** : à préparer (étape 1 sur 4)" in menu()
+    store.set_channels(guild.id, liste.id, selections.id)
+    assert "Draft** : à préparer (étape 2 sur 4)" in menu()
+    store.replace_players(guild.id, [("Patrick Roy", "Granby", "G")])
+    store.set_order(guild.id, ["laval"])
+    assert "Draft** : prêt à lancer" in menu()
+    store.start_draft(guild.id)
+    store.make_pick(guild.id, 1, store.available_players(guild.id)[0].id)
+    assert "Draft** : terminé" in menu()
+
+
+def test_admin_on_the_menu_stays_there_after_a_change(league):
+    """Après une action, le panneau de l'admin quitte les options pour l'écran du draft,
+    mais celui qui est sur le menu de la ligue y reste."""
+    bot, store, guild, gm_laval, _, _ = league
+    admin = admin_of(guild)
+
+    async def scenario():
+        on_menu_i = await open_panel(bot, guild, admin, draft=False)
+        await confirm(await command(bot, "draft", FakeInteraction(guild, gm_laval), "Roy"))
+        await bot.refresh_panels(guild, actor_id=admin.id)
+        return on_menu_i
+    on_menu_i = run(scenario())
+    assert keys(on_menu_i.view) == ["draft", "transaction", "shm"]
+    assert "en cours (1 choix faits sur 4)" in on_menu_i.edits[-1]
+
+
+def test_help_explains_the_league_panel_to_admins(league):
+    bot, store, guild, _, _, _ = league
+    admin = run(command(bot, "aide", FakeInteraction(guild, admin_of(guild)))).last
+    assert "panneau de la ligue" in admin
+    for name in ("**Draft**", "**Annoncer une transaction**", "**Annonces SHM auto**"):
+        assert name in admin
+
+
 def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
     bot, store, guild, admin, liste, selections = empty_league
     laval, granby, admins = guild.roles
@@ -590,7 +661,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         panel_i = await open_panel(bot, guild, admin)
         panel = panel_i.view
         assert "étape 1 sur 4" in panel_i.last and "Choisir les salons" in panel_i.last
-        assert keys(panel) == ["salons", "transaction", "options"]
+        assert keys(panel) == ["salons", "options", "menu"]
 
         # Étape 1 : salons
         i = await click(panel, button(panel, "salons"), FakeInteraction(guild, admin))
@@ -600,7 +671,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         await fill(modal, list_channel=[liste], picks_channel=[selections]).on_submit(done)
         assert "✅ Liste dans #draft-liste" in done.last and "Importer les joueurs" in done.last
         # le panneau s'est mis à jour tout seul : un seul bouton, celui de l'étape suivante
-        assert "étape 2 sur 4" in panel_i.edits[-1] and keys(panel) == ["joueurs", "transaction", "options"]
+        assert "étape 2 sur 4" in panel_i.edits[-1] and keys(panel) == ["joueurs", "options", "menu"]
 
         # Étape 2 : joueurs
         i = await click(panel, button(panel, "joueurs"), FakeInteraction(guild, admin))
@@ -612,7 +683,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         await confirm(done)
         assert "✅ 2 joueurs publiés" in done.last and "Définir l'ordre du draft" in done.last
         assert "Patrick Roy" in liste.texts()[0]
-        assert "étape 3 sur 4" in panel_i.edits[-1] and keys(panel) == ["ordre", "transaction", "options"]
+        assert "étape 3 sur 4" in panel_i.edits[-1] and keys(panel) == ["ordre", "options", "menu"]
 
         # Étape 3 : ordre. Le draft ne commence pas encore.
         i = await click(panel, button(panel, "ordre"), FakeInteraction(guild, admin))
@@ -624,7 +695,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         assert [p.team for p in store.upcoming_picks(guild.id, 10)] == ["Laval", "Granby", "Granby", "Laval"]
         assert not any("Le draft commence" in t for t in selections.texts())
         assert selections.with_button() == []
-        assert "Tout est prêt" in panel_i.edits[-1] and keys(panel) == ["lancer", "transaction", "options"]
+        assert "Tout est prêt" in panel_i.edits[-1] and keys(panel) == ["lancer", "options", "menu"]
 
         # Avant le lancement, personne ne peut choisir.
         early = await command(bot, "draft", FakeInteraction(guild, gm_laval), "Roy")
@@ -640,7 +711,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         assert "Délai de **8 h**" in done.last and admins.mention in done.last
         assert store.timer(guild.id) == (8 * 3600, admins.id)
         assert selections.texts() == []  # rien d'annoncé avant le lancement
-        assert keys(panel) == ["lancer", "transaction", "options"]  # retour à l'écran principal
+        assert keys(panel) == ["lancer", "options", "menu"]  # retour à l'écran principal
         assert "8 h par choix" in panel_i.edits[-1]
 
         # Étape 4 : lancer
@@ -651,7 +722,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         assert "Le draft commence" in selections.texts()[-1] and laval.mention in selections.texts()[-1]
         assert len(selections.with_button()) == 1
         assert store.deadline(guild.id) is not None
-        assert keys(panel) == ["choisir", "annuler", "transaction", "options"]
+        assert keys(panel) == ["choisir", "annuler", "options", "menu"]
         assert "Le draft est en cours" in panel_i.edits[-1]
         return panel_i
     run(scenario())
@@ -691,7 +762,7 @@ def test_launch_needs_channels(league):
     i, panel = run(scenario())
     assert "pas encore prêt" in i.last and "Choisir les salons" in i.last and i.view is None
     assert not store.is_started(guild.id)
-    assert keys(panel) == ["salons", "transaction", "options"]
+    assert keys(panel) == ["salons", "options", "menu"]
 
 
 def test_new_order_during_draft_waits_for_a_new_launch(league):
@@ -712,7 +783,7 @@ def test_new_order_during_draft_waits_for_a_new_launch(league):
     assert selections.with_button() == []  # l'ancien bouton « Faire mon choix » est retiré
     assert "pas encore commencé" in refused.last
     assert store.made_picks_count(guild.id) == 0
-    assert keys(panel) == ["lancer", "transaction", "options"]
+    assert keys(panel) == ["lancer", "options", "menu"]
 
 
 def test_channels_must_differ_and_bot_must_have_access(empty_league):
@@ -752,7 +823,7 @@ def test_more_options_keeps_every_feature_and_back_returns(league):
         panel_i = await open_panel(bot, guild, admin)
         panel = panel_i.view
         more = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
-        assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "shm", "retour"]
+        assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"]
         assert "Plus d'options" in more.last and "#draft-liste" in more.last and "4 choix" in more.last
         modals = {}
         for key, modal in (("salons", ChannelsModal), ("joueurs", PlayersModal), ("ordre", OrderModal),
@@ -762,7 +833,7 @@ def test_more_options_keeps_every_feature_and_back_returns(league):
             modals[key] = i.response.modal
         assert modals["salons"].list_channel.default_values  # les salons actuels sont déjà choisis
         back = await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
-        assert keys(panel) == ["choisir", "annuler", "transaction", "options"] and "en cours" in back.last
+        assert keys(panel) == ["choisir", "annuler", "options", "menu"] and "en cours" in back.last
     run(scenario())
 
 
@@ -968,14 +1039,14 @@ def test_panel_says_when_draft_is_over_and_last_pick_can_still_be_undone(league)
         await confirm(await command(bot, "draft", FakeInteraction(guild, gm_laval), "Roy"))
         panel_i = await open_panel(bot, guild, admin_of(guild))
         panel = panel_i.view
-        assert keys(panel) == ["annuler", "transaction", "options"]
+        assert keys(panel) == ["annuler", "options", "menu"]
         await click(panel, button(panel, "options"), FakeInteraction(guild, panel_i.user))
         back = await click(panel, button(panel, "retour"), FakeInteraction(guild, panel_i.user))
         undo = await click(panel, button(panel, "annuler"), FakeInteraction(guild, panel_i.user))
         await confirm(undo)
         return panel_i, back
     panel_i, back = run(scenario())
-    assert "draft est terminé" in panel_i.sent[0][0] and "draft est terminé" in back.last
+    assert "Draft** : terminé" in panel_i.sent[0][0] and "draft est terminé" in panel_i.sent[1][0] and "draft est terminé" in back.last
     assert store.made_picks_count(guild.id) == 0 and "en cours" in panel_i.edits[-1]
 
 
@@ -1011,19 +1082,20 @@ def test_windows_respect_discord_limits():
 
 
 def all_panel_screens():
-    """Le panneau à chaque étape du draft, et ses options."""
+    """Le menu de la ligue, l'écran du draft à chaque étape, et ses options."""
     store = Store(":memory:")
     bot = DraftBot(store, backup_dir=None)
     liste, selections = FakeChannel("liste"), FakeChannel("selections")
     guild = FakeGuild([FakeRole("Laval")], [liste, selections])
     screens = []
 
-    def snap(more=False):
+    def snap(screen="draft"):
         panel = AdminPanel(bot, 1, guild.id)
-        panel.more = more
+        panel.screen = screen
         assert panel.build(guild)
         screens.append(panel)
 
+    snap("menu")
     snap()
     store.set_channels(guild.id, liste.id, selections.id)
     snap()
@@ -1035,16 +1107,19 @@ def all_panel_screens():
     snap()
     store.make_pick(guild.id, 1, store.available_players(guild.id)[0].id)
     snap()
-    snap(more=True)
+    snap("options")
+    snap("menu")
     return screens
 
 
 def test_every_panel_screen_shows_few_buttons():
     phases = [[item.key for item in panel.children] for panel in all_panel_screens()]
     assert phases == [
-        ["salons", "transaction", "options"], ["joueurs", "transaction", "options"], ["ordre", "transaction", "options"], ["lancer", "transaction", "options"],
-        ["choisir", "annuler", "transaction", "options"], ["annuler", "transaction", "options"],
-        ["salons", "joueurs", "ordre", "delai", "echange", "journal", "shm", "retour"],
+        ["draft", "transaction", "shm"],
+        ["salons", "options", "menu"], ["joueurs", "options", "menu"], ["ordre", "options", "menu"], ["lancer", "options", "menu"],
+        ["choisir", "annuler", "options", "menu"], ["annuler", "options", "menu"],
+        ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"],
+        ["draft", "transaction", "shm"],
     ]
 
 
@@ -1252,18 +1327,18 @@ def test_discord_finds_the_new_buttons_after_each_screen_change(league):
     async def scenario():
         views = ViewStore(None)
         panel = AdminPanel(bot, 1, guild.id)
+        panel.screen = "draft"
         panel.build(guild)
         views.add_view(panel, 42)  # comme à l'envoi du panneau
         main = set(views._views[42])
-        panel.more = True
+        panel.screen = "options"
         panel.build(guild)
         views.add_view(panel, 42)  # comme à chaque modification du panneau
         more = set(views._views[42])
         panel.stop()
         return main, more, {(2, item.custom_id) for item in panel.children}
     main, more, current = run(scenario())
-    assert main == {(2, "admin:choisir"), (2, "admin:annuler"), (2, "admin:transaction"),
-                    (2, "admin:options")}
+    assert main == {(2, "admin:choisir"), (2, "admin:annuler"), (2, "admin:options"), (2, "admin:menu")}
     assert more == current and (2, "admin:choisir") not in more and (2, "admin:retour") in more
 
 
@@ -1307,7 +1382,7 @@ def nhl(monkeypatch):
 
 async def send_capture(bot, guild, admin, channel, image=None):
     """L'admin clique sur « Annoncer une transaction » dans /admin, puis envoie sa capture."""
-    panel = (await open_panel(bot, guild, admin)).view
+    panel = (await open_panel(bot, guild, admin, draft=False)).view
     opened = await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
     modal = opened.response.modal
     assert isinstance(modal, CaptureModal), opened.sent
@@ -1458,7 +1533,7 @@ def test_capture_reading_not_installed(nhl, monkeypatch):
     monkeypatch.setattr(bot_module, "capture_installed", lambda: False)
 
     async def scenario():
-        panel = (await open_panel(bot, guild, admin)).view
+        panel = (await open_panel(bot, guild, admin, draft=False)).view
         return await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
     i = run(scenario())
     assert i.response.modal is None and "pip install -U -r requirements.txt" in i.last
@@ -1633,8 +1708,7 @@ SAME = object()
 
 
 async def setup_shm_from_panel(bot, guild, admin, channel, address, waivers=SAME, buyouts=SAME, standings=None):
-    panel = (await open_panel(bot, guild, admin)).view
-    await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+    panel = (await open_panel(bot, guild, admin, draft=False)).view
     opened = await click(panel, button(panel, "shm"), FakeInteraction(guild, admin))
     modal = opened.response.modal
     assert isinstance(modal, ShmModal), opened.sent
@@ -1674,20 +1748,23 @@ def test_shm_setup_keeps_old_trades_quiet_then_announces_new_ones(shm_league):
     assert [a for _, _, a, _ in store.log_entries(guild.id)].count("transaction SHM") == 2
 
 
-def test_shm_status_is_shown_in_more_options(shm_league):
+def test_shm_status_is_shown_in_the_league_menu(shm_league):
     bot, store, guild, admin, channel, roles, site = shm_league
 
     async def scenario():
+        before = (await open_panel(bot, guild, admin, draft=False)).last
         await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        panel = (await open_panel(bot, guild, admin)).view
-        ok = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        panel_i = await open_panel(bot, guild, admin, draft=False)
+        panel = panel_i.view
+        ok = panel_i.last
         site.error = "Je n'arrive pas à joindre SHM en ce moment."
         await bot.check_shm()
-        await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
-        failing = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
-        return ok.last, failing.last
-    ok, failing = run(scenario())
-    assert "Annonces SHM automatiques : ligue `lnhs_2` (✅ lu à l'instant)" in ok
+        await click(panel, button(panel, "draft"), FakeInteraction(guild, admin))
+        failing = await click(panel, button(panel, "menu"), FakeInteraction(guild, admin))
+        return before, ok, failing.last
+    before, ok, failing = run(scenario())
+    assert "État : pas activées" in before
+    assert "État : ligue `lnhs_2` (✅ lu à l'instant)" in ok
     assert "Transactions → #transactions · Ballottage → #transactions · Rachats → #transactions · Classement → non" in ok
     assert "⚠️ Je n'arrive pas à joindre SHM" in failing
 
@@ -1825,8 +1902,7 @@ def test_shm_button_explains_when_the_bot_has_no_shm_account(league):
     bot.owner_ids = {admin.id}
 
     async def scenario():
-        panel = (await open_panel(bot, guild, admin)).view
-        await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        panel = (await open_panel(bot, guild, admin, draft=False)).view
         return await click(panel, button(panel, "shm"), FakeInteraction(guild, admin))
     i = run(scenario())
     assert i.response.modal is None and "SHM_USERNAME" in i.last
@@ -2484,8 +2560,7 @@ def test_only_william_can_connect_shm(shm_league):
     server_admin = admin_of(guild)
 
     async def scenario():
-        panel = (await open_panel(bot, guild, server_admin)).view
-        await click(panel, button(panel, "options"), FakeInteraction(guild, server_admin))
+        panel = (await open_panel(bot, guild, server_admin, draft=False)).view
         opened = await click(panel, button(panel, "shm"), FakeInteraction(guild, server_admin))
         # Même avec une vieille fenêtre ouverte, l'envoi est revérifié.
         direct = FakeInteraction(guild, server_admin)
