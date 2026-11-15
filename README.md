@@ -199,7 +199,8 @@ Ce que le serveur fait ensuite tout seul :
 - **Mises à jour** : toutes les 3 minutes, il regarde si `main` a changé. Une nouvelle version est copiée à côté de l'ancienne, tous les tests sont lancés, puis le bot redémarre dessus. Si un test échoue, la version est refusée et le bot n'est pas touché. Si le bot ne se connecte pas à Discord dans les 2 minutes, le serveur remet tout seul la version d'avant. Une version refusée n'est pas réessayée : il faut une nouvelle PR. Avant chaque changement de version, la base est copiée dans `/data/sauvegardes` (fichiers `avant-maj_…`, les 10 plus récents sont gardés).
 - **Revenir en arrière** depuis le téléphone : sur GitHub, ouvrir la PR fusionnée et cliquer **Revert**, puis fusionner la PR créée. Le serveur installe la version d'avant en quelques minutes.
 - Le bot redémarre s'il plante et quand le serveur redémarre. La base du draft et ses sauvegardes sont dans `/data`.
-- Fuseau horaire America/Toronto, mémoire d'appoint de 2 Go, pare-feu (seul SSH entre), fail2ban, mises à jour de sécurité d'Ubuntu chaque jour (redémarrage à 5 h seulement si une mise à jour l'exige).
+- Fuseau horaire America/Toronto, mémoire d'appoint de 2 Go, pare-feu (seul SSH entre), fail2ban, mises à jour de sécurité d'Ubuntu chaque nuit entre 3 h 30 et 4 h (redémarrage du serveur à 5 h seulement si une mise à jour l'exige).
+- **Le bot n'est jamais relancé en pleine journée par Ubuntu.** Avant, Ubuntu faisait ses mises à jour entre 6 h et 7 h et relançait le bot tout de suite : une fenêtre ouverte dans `/admin` donnait « Une erreur s'est produite ». Maintenant Ubuntu ne relance plus le bot lui-même (réglage `needrestart`) ; juste après les mises à jour de la nuit, `hockey-bot-nuit` relance le bot seulement si une bibliothèque qu'il utilise a été remplacée, et le note dans l'historique (`bot etat`).
 
 Commandes sur le serveur (taper `bot` pour la liste) :
 
