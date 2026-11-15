@@ -110,7 +110,7 @@ sauvegarder_base() {
     install -d -o "$UTILISATEUR" -g "$UTILISATEUR" -m 700 "$dossier"
     local nom
     nom="$dossier/avant-maj_$(date +%Y-%m-%d_%Hh%M)_$1.db"
-    if cp -p /data/draft.db "$nom"; then
+    if cp /data/draft.db "$nom"; then
         chown "$UTILISATEUR:$UTILISATEUR" "$nom"
         journal "Base sauvegardée : $nom"
     else
