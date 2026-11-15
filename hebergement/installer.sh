@@ -9,7 +9,8 @@
 #
 # Ce qu'il fait :
 #   - fuseau horaire America/Toronto, mémoire d'appoint (swap) de 2 Go, mises à jour de sécurité
-#     d'Ubuntu automatiques, pare-feu (seul SSH entre) et fail2ban contre les essais de mot de passe ;
+#     d'Ubuntu automatiques la nuit (le bot n'est relancé que la nuit, et seulement s'il le faut),
+#     pare-feu (seul SSH entre) et fail2ban contre les essais de mot de passe ;
 #   - un utilisateur « hockeybot » sans droits, qui fait tourner le bot ;
 #   - /data : la base du draft et ses sauvegardes ;
 #   - demande le jeton Discord et le compte SHM du bot (gardés sur le serveur seulement) ;
@@ -62,6 +63,14 @@ echo 'vm.swappiness=10' > /etc/sysctl.d/90-hockey-bot.conf
 sysctl -q -p /etc/sysctl.d/90-hockey-bot.conf || true
 
 etape "3/8 Logiciels nécessaires (1 à 3 minutes)"
+# Avant tout « apt-get » : Ubuntu ne doit jamais relancer le bot lui-même après une mise à jour
+# (il le faisait le matin, en pleine journée). Le bot est relancé la nuit, et seulement s'il le faut
+# (voir nuit.sh et l'étape 4). Avec ce réglage, relancer ce script ne relance pas le bot non plus.
+mkdir -p /etc/needrestart/conf.d
+cat > /etc/needrestart/conf.d/hockey-bot.conf <<'EOF'
+# Hockey Sims Tools : ne jamais relancer le bot après une mise à jour d'Ubuntu (hockey-bot-nuit s'en occupe, la nuit).
+$nrconf{override_rc}{qr(^hockey-bot)} = 0;
+EOF
 # Sur un serveur neuf, Ubuntu fait souvent ses propres mises à jour au premier démarrage :
 # on attend qu'il ait fini (jusqu'à 10 minutes) au lieu d'échouer.
 apt-get -o DPkg::Lock::Timeout=600 update -q
@@ -74,12 +83,27 @@ ufw allow OpenSSH > /dev/null
 ufw --force enable > /dev/null
 systemctl enable --now fail2ban > /dev/null 2>&1 || true
 cat > /etc/apt/apt.conf.d/52hockey-bot <<'EOF'
-// Mises à jour de sécurité d'Ubuntu chaque jour ; redémarrage à 5 h seulement si une mise à jour l'exige.
+// Mises à jour de sécurité d'Ubuntu chaque nuit (3 h 30 à 4 h) ; redémarrage à 5 h seulement si une mise à jour l'exige.
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 Unattended-Upgrade::Automatic-Reboot "true";
 Unattended-Upgrade::Automatic-Reboot-Time "05:00";
 EOF
+# Les mises à jour de sécurité la nuit, pas entre 6 h et 7 h comme Ubuntu le fait de base.
+mkdir -p /etc/systemd/system/apt-daily-upgrade.timer.d /etc/systemd/system/apt-daily-upgrade.service.d
+cat > /etc/systemd/system/apt-daily-upgrade.timer.d/hockey-bot.conf <<'EOF'
+# Hockey Sims Tools : mises à jour de sécurité la nuit, pas pendant que les ligues utilisent le bot.
+[Timer]
+OnCalendar=
+OnCalendar=*-*-* 03:30
+RandomizedDelaySec=30m
+EOF
+# Juste après ces mises à jour : relancer le bot seulement s'il utilise une bibliothèque remplacée.
+cat > /etc/systemd/system/apt-daily-upgrade.service.d/hockey-bot.conf <<'EOF'
+[Service]
+ExecStartPost=-/usr/local/sbin/hockey-bot-nuit
+EOF
+systemctl daemon-reload
 mkdir -p /etc/systemd/journald.conf.d
 printf '[Journal]\nSystemMaxUse=300M\n' > /etc/systemd/journald.conf.d/hockey-bot.conf
 systemctl restart systemd-journald || true
@@ -107,6 +131,7 @@ OUTILS=$(mktemp -d)
 git --git-dir="$BASE/depot.git" archive "$SHA" hebergement | tar -x --no-same-permissions --no-same-owner -C "$OUTILS"
 install -m 755 "$OUTILS/hebergement/maj.sh" /usr/local/sbin/hockey-bot-maj
 install -m 755 "$OUTILS/hebergement/bot.sh" /usr/local/bin/bot
+install -m 755 "$OUTILS/hebergement/nuit.sh" /usr/local/sbin/hockey-bot-nuit
 install -m 644 "$OUTILS/hebergement/hockey-bot.service" "$OUTILS/hebergement/hockey-bot-maj.service" \
     "$OUTILS/hebergement/hockey-bot-maj.timer" /etc/systemd/system/
 rm -rf "$OUTILS"

@@ -35,6 +35,8 @@ NO_PINGS = discord.AllowedMentions.none()
 
 # Secondes de suspense avant d'afficher le résultat de la roue.
 WHEEL_SUSPENSE = 3
+# Avec la roue animée : le gagnant est écrit un peu après l'arrêt de la roue (le temps que l'image arrive).
+WHEEL_SUSPENSE_AFTER_GIF = 1.5
 # Temps d'affichage du « ✅ repêché » avant qu'il s'efface.
 PICK_REPLY_SECONDS = 8
 
@@ -2470,8 +2472,21 @@ def register_commands(bot: DraftBot) -> None:
         # Le résultat est tiré et noté au journal avant le suspense : il ne peut plus changer.
         winner = wheel.spin(options)
         store.add_log(interaction.guild_id, interaction.user.id, "roue", wheel.log_details(title, options, winner))
-        await interaction.response.send_message(wheel.spinning_message(title, options), allowed_mentions=NO_PINGS)
-        await asyncio.sleep(WHEEL_SUSPENSE)
+        # Dessiner la roue prend 1 à 3 secondes : on répond tout de suite à Discord (« réfléchit… »),
+        # en public, et le dessin se fait à côté pour ne pas bloquer le reste du bot.
+        await interaction.response.defer(thinking=True)
+        suspense = WHEEL_SUSPENSE
+        try:
+            gif = await asyncio.to_thread(wheel.render_gif, options, options.index(winner))
+            files = [discord.File(io.BytesIO(gif), filename="roue.gif")]
+            suspense = max(suspense, wheel.spin_seconds() + WHEEL_SUSPENSE_AFTER_GIF)
+        except Exception:
+            # Sans image, la roue marche quand même : le résultat en texte, comme avant.
+            log.exception("Roue animée impossible, résultat en texte seulement")
+            files = []
+        await interaction.edit_original_response(content=wheel.spinning_message(title, options), attachments=files,
+                                                 allowed_mentions=NO_PINGS)
+        await asyncio.sleep(suspense)
         await interaction.edit_original_response(content=wheel.result_message(title, options, winner),
                                                  allowed_mentions=NO_PINGS)
 

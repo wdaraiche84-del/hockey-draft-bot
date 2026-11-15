@@ -146,6 +146,7 @@ class FakeResponse:
 
     async def defer(self, **kwargs):
         self.done = True
+        self.deferred = kwargs
 
 
 class FakeFollowup:
@@ -163,11 +164,13 @@ class FakeInteraction:
         self.user = user
         self.sent = []
         self.edits = []
+        self.edit_kwargs = []
         self.response = FakeResponse(self)
         self.followup = FakeFollowup(self)
         self.deleted = False
 
     async def edit_original_response(self, **kwargs):
+        self.edit_kwargs.append(kwargs)
         self.edits.append(kwargs.get("content"))
         self.sent.append((kwargs.get("content"), kwargs.get("view")))
 
@@ -564,16 +567,53 @@ def test_help_is_short_and_admins_see_more(league):
     assert "/admin" in admin
 
 
+def no_wheel_wait(monkeypatch):
+    monkeypatch.setattr(bot_module, "WHEEL_SUSPENSE", 0)
+    monkeypatch.setattr(bot_module, "WHEEL_SUSPENSE_AFTER_GIF", 0)
+    monkeypatch.setattr(bot_module.wheel, "spin_seconds", lambda: 0)
+
+
 def test_wheel_is_public_and_logged(league, monkeypatch):
     bot, store, guild, gm_laval, _, _ = league
-    monkeypatch.setattr(bot_module, "WHEEL_SUSPENSE", 0)
+    no_wheel_wait(monkeypatch)
     i = run(command(bot, "roue", FakeInteraction(guild, gm_laval), "ott, stl", "gambrell"))
+    assert i.response.deferred.get("ephemeral") is not True  # tout le monde voit la roue
     spinning, result = i.sent[-2][0], i.sent[-1][0]
     assert "La roue tourne" in spinning and "gambrell" in spinning
     winner = result.split("→ **")[1].split("**")[0]
     assert result.startswith("🎡 **gambrell** → ") and winner in ("ott", "stl")
     entry = store.log_entries(guild.id)[-1]
     assert entry[2] == "roue" and entry[3] == f"gambrell : ott, stl → {winner}"
+
+
+def test_wheel_shows_the_animated_wheel_that_stops_on_the_winner(league, monkeypatch):
+    from PIL import Image
+    bot, store, guild, gm_laval, _, _ = league
+    no_wheel_wait(monkeypatch)
+    drawn = []
+    real = bot_module.wheel.render_gif
+    monkeypatch.setattr(bot_module.wheel, "render_gif", lambda options, index: drawn.append((options, index))
+                        or real(options, index))
+    i = run(command(bot, "roue", FakeInteraction(guild, gm_laval), "ott, stl, mtl", None))
+    winner = i.last.split("→ **")[1].split("**")[0]
+    options, index = drawn[0]
+    assert options[index] == winner  # l'image montre le gagnant déjà tiré et noté au journal
+    files = i.edit_kwargs[0]["attachments"]
+    assert len(files) == 1 and files[0].filename == "roue.gif"
+    gif = Image.open(files[0].fp)
+    assert gif.format == "GIF" and gif.n_frames > 30 and "loop" not in gif.info  # tourne une seule fois
+    assert "attachments" not in i.edit_kwargs[-1]  # le résultat garde l'image
+
+
+def test_wheel_still_works_in_text_if_the_image_fails(league, monkeypatch):
+    bot, store, guild, gm_laval, _, _ = league
+    no_wheel_wait(monkeypatch)
+
+    def broken(options, index):
+        raise OSError("police introuvable")
+    monkeypatch.setattr(bot_module.wheel, "render_gif", broken)
+    i = run(command(bot, "roue", FakeInteraction(guild, gm_laval), "ott, stl", None))
+    assert i.edit_kwargs[0]["attachments"] == [] and "→ **" in i.last
 
 
 def test_wheel_rejects_bad_options(league):
