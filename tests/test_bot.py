@@ -1,6 +1,7 @@
 """Scénarios complets des commandes, boutons et fenêtres, avec de faux objets Discord."""
 
 import asyncio
+import logging
 import itertools
 from dataclasses import replace
 
@@ -2016,9 +2017,9 @@ def test_waivers_already_on_shm_are_quiet_then_new_ones_are_announced(shm_league
     assert channel.texts() == [
         f"⚠️ **Ballottage** : {mtl} {roles['Canadiens'].mention} place **Brendan Gallagher** au ballottage.\n"
         "AD · 33 ans · 6 500 000 $ · 2 ans de contrat\n"
-        "⏳ Se termine dans 1 jour. S'il n'est pas réclamé, il devient joueur autonome.",
+        "⏳ Se termine dans 1 jour. S'il n'est pas réclamé, il deviendra joueur autonome.",
         f"⚠️ **Ballottage** : {roles['Islanders'].mention} place **Pierre Engvall** au ballottage.\n"
-        "S'il n'est pas réclamé, il est envoyé dans la LAH.",
+        "S'il n'est pas réclamé, il sera envoyé dans la LAH.",
     ]
     # Pas de notification pour un joueur soumis : la mention du rôle s'affiche sans sonner.
     assert all(m == bot_module.NO_PINGS for m in channel.mentions())
@@ -2158,12 +2159,12 @@ def test_buyouts_already_on_shm_are_quiet_then_new_ones_are_announced(shm_league
     assert quiet == []
     assert channel.texts() == [
         f"💸 **Rachat** : {roles['Canadiens'].mention} rachète le contrat de **Josh Anderson** "
-        "(salaire du rachat : 2 750 000 $).",
+        "(montant du rachat : 2 750 000 $).",
         f"💸 **Rachat** : {nyi} {roles['Islanders'].mention} rachète le contrat de **Pierre Engvall** "
-        "(salaire du rachat : 1 000 000 $).",
+        "(montant du rachat : 1 000 000 $).",
         # Un club-école inconnu : nommé tel quel, sans deviner l'équipe.
         "💸 **Rachat** : Le club-école **SPR** rachète le contrat de **Jake Neighbours** "
-        "(salaire du rachat : 900 000 $).",
+        "(montant du rachat : 900 000 $).",
     ]
     assert all(m == bot_module.NO_PINGS for m in channel.mentions())
     assert [a for _, _, a, _ in store.log_entries(guild.id)].count("rachat SHM") == 3
@@ -2548,7 +2549,7 @@ def test_william_activates_from_the_private_message(welcome):
     click_i.guild, click_i.guild_id, click_i.client, click_i.message = None, None, bot, DM()
     run(item.callback(click_i))
     assert store.is_approved(guild.id)
-    assert click_i.last.startswith("🔔 **Nouveau client!**") and "**Ligue LHJMQ** est activé" in click_i.last
+    assert click_i.last.startswith("🔔 **Nouveau client !**") and "**Ligue LHJMQ** est activé" in click_i.last
     assert click_i.view is None  # le bouton disparaît
     again = FakeInteraction(guild, william)
     again.guild, again.guild_id, again.client, again.message = None, None, bot, DM()
@@ -2616,3 +2617,43 @@ def test_only_william_can_connect_shm(shm_league):
     # William, lui, branche la ligue normalement.
     i, _ = run(setup_shm_from_panel(bot, guild, william, channel, "lnhs_2"))
     assert "C'est branché" in i.last
+
+
+# Les bugs arrivent en message privé chez William.
+
+def test_bot_errors_reach_william_in_private_without_spam(welcome):
+    bot, store, guild, william, general = welcome
+    bot.install_owner_alerts()
+    logger = logging.getLogger("draft_bot")
+
+    async def scenario():
+        for _ in range(3):  # la même erreur trois fois : un seul message
+            try:
+                raise ValueError("mot de passe secret dans le détail")
+            except ValueError:
+                logger.exception("Annonces SHM impossibles sur le serveur %s", 123)
+        logger.warning("Un simple avertissement")  # pas une erreur : rien
+        for n in range(10):  # dix erreurs différentes : au plus 5 messages par heure en tout
+            logger.error(f"Autre erreur {n}")
+        await asyncio.sleep(0.05)
+        await bot.close()
+        logger.error("Après l'arrêt")  # le bot est arrêté : plus rien
+        await asyncio.sleep(0)
+
+    run(scenario())
+    texts = [dm for dm, _ in william.dms]
+    assert len(texts) == 5
+    assert "Le bot a eu un problème" in texts[0]
+    assert "Annonces SHM impossibles sur le serveur 123" in texts[0] and "`ValueError`" in texts[0]
+    assert all("secret" not in t for t in texts)
+    assert "Autre erreur 3" in texts[-1]
+
+
+def test_no_private_message_about_bugs_before_the_bot_runs(welcome):
+    bot, store, guild, william, general = welcome
+    bot.install_owner_alerts()
+    try:
+        logging.getLogger("draft_bot").error("Erreur au démarrage")
+    finally:
+        logging.getLogger("draft_bot").removeHandler(bot.owner_alerts)
+    assert william.dms == []

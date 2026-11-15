@@ -66,6 +66,60 @@ SHM_WARN_SECONDS = 3600
 OWNER_INVITE_SECONDS = 7 * 24 * 3600
 # Réglage : les serveurs où le bot était déjà avant l'activation par le propriétaire ont été activés.
 APPROVALS_READY = "serveurs_existants_actives"
+# Quand le bot a une erreur, il écrit en privé à son propriétaire : la même erreur au plus
+# une fois par heure, et au plus 5 messages par heure en tout (pas d'avalanche).
+BUG_DM_SAME_SECONDS = 3600
+BUG_DM_PER_HOUR = 5
+
+
+class OwnerAlerts(logging.Handler):
+    """Prévient le propriétaire du bot en message privé quand une erreur est écrite au journal.
+
+    Le message dit seulement ce qui a raté et le type d'erreur : jamais le détail technique,
+    qui pourrait contenir une adresse ou un mot de passe. Le détail reste dans « bot journal »."""
+
+    def __init__(self, bot: "DraftBot") -> None:
+        super().__init__(level=logging.ERROR)
+        self.bot = bot
+        self.last_sent: dict[str, float] = {}
+        self.recent: list[float] = []
+        self.tasks: set[asyncio.Task] = set()
+
+    def should_send(self, key: str, now: float) -> bool:
+        if now - self.last_sent.get(key, -BUG_DM_SAME_SECONDS) < BUG_DM_SAME_SECONDS:
+            return False
+        self.recent = [t for t in self.recent if now - t < 3600]
+        if len(self.recent) >= BUG_DM_PER_HOUR:
+            return False
+        self.last_sent[key] = now
+        self.recent.append(now)
+        return True
+
+    @staticmethod
+    def text(record: logging.LogRecord) -> str:
+        what = record.getMessage().strip().splitlines()[0][:300] if record.getMessage().strip() else "?"
+        lines = ["🐞 **Le bot a eu un problème**", f"Ce qui a raté : {escape_markdown(what)}"]
+        if record.exc_info and record.exc_info[0] is not None:
+            lines.append(f"Type d'erreur : `{record.exc_info[0].__name__}`")
+        lines.append("-# Le détail est dans le journal du serveur (commande `bot journal`). "
+                     "Ce message ne revient pas avant une heure pour la même erreur.")
+        return "\n".join(lines)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # Pas encore connecté à Discord (ou déjà arrêté) : le journal suffit.
+        try:
+            if not self.bot.owner_ids or self.bot.is_closed():
+                return
+            if not self.should_send(f"{record.name}:{record.msg}", time.monotonic()):
+                return
+            task = loop.create_task(self.bot.dm_owner(self.text(record)))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+        except Exception:
+            self.handleError(record)
 
 
 class ShmStatus:
@@ -115,6 +169,7 @@ class DraftBot(discord.Client):
         # Le bouton « Activer ce serveur » du message privé marche encore après un redémarrage.
         self.add_dynamic_items(ApproveServerButton)
         await self.load_owner()
+        self.install_owner_alerts()
         await self.clear_global_commands()
         self.backup("demarrage")
         self.check_timers.start()
@@ -122,7 +177,17 @@ class DraftBot(discord.Client):
         if self.shm is not None:
             self.check_shm.start()
 
+    def install_owner_alerts(self) -> None:
+        """Les erreurs du bot et de la bibliothèque Discord arrivent en privé au propriétaire."""
+        self.owner_alerts = OwnerAlerts(self)
+        for name in ("draft_bot", "discord"):
+            logging.getLogger(name).addHandler(self.owner_alerts)
+
     async def close(self) -> None:
+        alerts = getattr(self, "owner_alerts", None)
+        if alerts is not None:
+            for name in ("draft_bot", "discord"):
+                logging.getLogger(name).removeHandler(alerts)
         if self.shm is not None:
             await self.shm.close()
         await super().close()
@@ -251,7 +316,7 @@ class DraftBot(discord.Client):
                             view=approve_view(guild.id))
 
     async def new_client_text(self, guild: discord.Guild, welcomed: bool) -> str:
-        lines = [f"🔔 **Nouveau client!** Le bot vient d'être ajouté au serveur **{escape_markdown(guild.name)}**."]
+        lines = [f"🔔 **Nouveau client !** Le bot vient d'être ajouté au serveur **{escape_markdown(guild.name)}**."]
         if guild.member_count:
             lines.append(f"👥 Membres : {guild.member_count}")
         owner = await self.find_user(guild.owner_id)
@@ -1028,7 +1093,7 @@ async def check_turn(bot: DraftBot, interaction: discord.Interaction, forced: bo
         await reply(interaction, "Le draft n'est pas encore prêt. Un admin doit le préparer avec `/admin`.")
         return None
     if not bot.store.is_started(interaction.guild_id):
-        text = "Le draft n'est pas encore commencé. Attends l'annonce du début du draft."
+        text = "Le draft n'a pas encore commencé. Attends l'annonce du début du draft."
         if is_admin(interaction.user):
             text += f"\n*Admin : le panneau `/admin` (bouton **{DRAFT_BUTTON}**) montre la prochaine étape, jusqu'à **▶ {LAUNCH_STEP}**.*"
         await reply(interaction, text)
@@ -1447,8 +1512,8 @@ async def launch_draft(bot: DraftBot, interaction: discord.Interaction) -> None:
                 await reply(button_interaction, "Le draft est déjà lancé, ou l'ordre a été effacé. Rien n'a changé.")
                 return
             store.add_log(guild_id, interaction.user.id, "lancement", f"{store.pick_count(guild_id)} choix")
-            announced = await bot.announce(interaction.guild, "🏒 **Le draft commence!**")
-        await reply(button_interaction, "✅ Le draft est lancé!" + announced)
+            announced = await bot.announce(interaction.guild, "🏒 **Le draft commence !**")
+        await reply(button_interaction, "✅ Le draft est lancé !" + announced)
         await bot.refresh_panels(interaction.guild, interaction.user.id)
 
     await ask_confirmation(
@@ -1771,7 +1836,7 @@ class TradePreview(discord.ui.View):
                 line += " *(déjà annoncée)*"
             issues = capture.problems(trade, roles)
             if issues:
-                line += f"\n　⚠️ {', '.join(issues)} : clique **Corriger**"
+                line += f"\n　⚠️ {', '.join(issues)} : clique sur **Corriger**"
             lines.append(line)
         if self.skipped:
             lines.append(f"*{self.skipped} transactions plus anciennes ne sont pas montrées.*")
@@ -2019,7 +2084,7 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
         await bot.publish_standings(guild.id, chosen["standings"], standings)
     await bot.shm_ok(guild.id, channel)
     count = len(page.trades)
-    lines = [f"✅ **C'est branché!** Le bot suit la ligue `{slug}` sur SHM."]
+    lines = [f"✅ **C'est branché !** Le bot suit la ligue `{slug}` sur SHM."]
     if posted:
         lines.append(f"{posted} nouvelle{'s' if posted > 1 else ''} transaction{'s' if posted > 1 else ''} "
                      f"annoncée{'s' if posted > 1 else ''} dans {channel.mention}.")
@@ -2135,7 +2200,7 @@ def draft_summary(bot: DraftBot, guild: discord.Guild) -> str:
 def menu_text(bot: DraftBot, guild: discord.Guild) -> str:
     return "\n".join([
         "🏒 **Panneau de la ligue**",
-        "Que veux-tu faire?",
+        "Que veux-tu faire ?",
         "",
         f"🏒 **{DRAFT_BUTTON}** : {draft_summary(bot, guild)}",
         "📣 **Transactions** : annoncer un échange à partir d'une capture SHM",
@@ -2182,7 +2247,7 @@ def panel_text(bot: DraftBot, guild: discord.Guild, screen: str = DRAFT_SCREEN) 
     if phase == "prêt":
         channels = bot.channels(guild)
         return "\n".join([
-            f"✅ **Tout est prêt!** Dernière étape : {len(SETUP_STEPS) + 1} sur {len(SETUP_STEPS) + 1}.",
+            f"✅ **Tout est prêt !** Dernière étape : {len(SETUP_STEPS) + 1} sur {len(SETUP_STEPS) + 1}.",
             "",
             f"• {picks} choix, {len(store.order_teams(guild.id))} équipes, "
             f"{len(store.available_players(guild.id))} joueurs",
@@ -2366,7 +2431,7 @@ HELP_TEXT = """\
 🏒 **Le draft : comment faire ton choix**
 1. Quand c'est ton tour, le bot mentionne ton équipe dans le salon des annonces.
 2. Clique sur le bouton vert **Faire mon choix** sous ce message.
-3. Choisis ton joueur (ou tape quelques lettres de son nom), puis clique **Confirmer**.
+3. Choisis ton joueur (ou tape quelques lettres de son nom), puis clique sur **Confirmer**.
 
 Autres commandes : `/statut` montre qui est au tour, `/roue` fait un tirage au sort.
 Tu préfères taper ? `/draft` suivi du nom du joueur fonctionne aussi."""
@@ -2443,7 +2508,7 @@ def register_commands(bot: DraftBot) -> None:
     async def statut(interaction: discord.Interaction) -> None:
         guild_id = interaction.guild_id
         if store.pick_count(guild_id) and not store.is_started(guild_id):
-            await reply(interaction, "Le draft n'est pas encore commencé. Les équipes seront averties au début.")
+            await reply(interaction, "Le draft n'a pas encore commencé. Les équipes seront averties au début.")
             return
         upcoming = store.upcoming_picks(guild_id, 6)
         if not upcoming:

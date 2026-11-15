@@ -35,12 +35,14 @@ def details(waiver: shm.ShmWaiver) -> str:
     return " · ".join(escape_markdown(p) for p in parts if p)
 
 
-def where_unclaimed(waiver: shm.ShmWaiver) -> str:
+def where_unclaimed(waiver: shm.ShmWaiver, future: bool = False) -> str:
+    """Où va le joueur s'il n'est pas réclamé. Au futur quand le ballottage
+    commence (« il deviendra »), au présent quand il vient de finir (« il devient »)."""
     dest = waiver.dest.upper()
     if dest == "UFA":
-        return "il devient joueur autonome"
+        return "il deviendra joueur autonome" if future else "il devient joueur autonome"
     if dest in ("AHL", "LAH"):
-        return "il est envoyé dans la LAH"
+        return "il sera envoyé dans la LAH" if future else "il est envoyé dans la LAH"
     return ""
 
 
@@ -52,8 +54,8 @@ def placed(waiver: shm.ShmWaiver, teams: dict[str, str], roles: list, emojis: di
     end = []
     if waiver.ends:
         end.append(f"⏳ Se termine {escape_markdown(waiver.ends)}.")
-    if where_unclaimed(waiver):
-        end.append(f"S'il n'est pas réclamé, {where_unclaimed(waiver)}.")
+    if where_unclaimed(waiver, future=True):
+        end.append(f"S'il n'est pas réclamé, {where_unclaimed(waiver, future=True)}.")
     if end:
         lines.append(" ".join(end))
     return "\n".join(lines)
@@ -77,7 +79,7 @@ def bought_out(buyout: shm.Buyout, teams: dict[str, str], roles: list, emojis: d
     else:
         who = team_label(buyout.team, teams, roles, emojis)
     return (f"💸 **Rachat** : {who} rachète le contrat de **{escape_markdown(buyout.player)}** "
-            f"(salaire du rachat : {escape_markdown(buyout.salary)} $).")
+            f"(montant du rachat : {escape_markdown(buyout.salary)} $).")
 
 
 # Le classement : quelques messages que le bot modifie après chaque simulation.
