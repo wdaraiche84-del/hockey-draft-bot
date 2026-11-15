@@ -1,0 +1,11 @@
+# Vérifie s'il y a une nouvelle version du bot sur GitHub et l'installe (voir maj.sh).
+[Unit]
+Description=Mise à jour automatique du bot Hockey Sims Tools
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hockey-bot-maj
+TimeoutStartSec=40min
+Nice=10
