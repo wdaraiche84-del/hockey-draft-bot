@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS shm_feeds (
     league TEXT PRIMARY KEY,
     rows TEXT NOT NULL
 );
+-- Les serveurs où le bot est arrivé : prévenu (le propriétaire du bot a reçu le message
+-- « Nouveau client ») et activé (le propriétaire a permis d'ouvrir le panneau /admin).
+CREATE TABLE IF NOT EXISTS guild_access (
+    guild_id INTEGER PRIMARY KEY,
+    notified_at REAL,
+    approved_at REAL
+);
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 # Colonnes ajoutées après la première version : une base existante les reçoit au démarrage.
@@ -619,6 +630,42 @@ class Store:
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO announced_trades VALUES (?, ?, ?)",
                             (guild_id, fingerprint, time.time()))
+
+    # Serveurs activés par le propriétaire du bot
+
+    def is_approved(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT approved_at FROM guild_access WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0] is not None)
+
+    def approve_guild(self, guild_id: int, user_id: int | None) -> bool:
+        """Active le serveur. Rend False s'il l'était déjà (rien n'est changé)."""
+        if self.is_approved(guild_id):
+            return False
+        with self.db:
+            self.db.execute("INSERT INTO guild_access (guild_id, approved_at) VALUES (?, ?) "
+                            "ON CONFLICT(guild_id) DO UPDATE SET approved_at = excluded.approved_at",
+                            (guild_id, time.time()))
+            if user_id is not None:
+                self._log(guild_id, user_id, "serveur", "activé par le créateur du bot")
+        return True
+
+    def was_notified(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT notified_at FROM guild_access WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0] is not None)
+
+    def mark_notified(self, guild_id: int) -> None:
+        with self.db:
+            self.db.execute("INSERT INTO guild_access (guild_id, notified_at) VALUES (?, ?) "
+                            "ON CONFLICT(guild_id) DO UPDATE SET notified_at = excluded.notified_at",
+                            (guild_id, time.time()))
+
+    def setting(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
     # Journal et sauvegardes
 

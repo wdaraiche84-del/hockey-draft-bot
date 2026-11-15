@@ -196,6 +196,7 @@ def league():
     laval, granby = FakeRole("Laval"), FakeRole("Granby")
     liste, selections = FakeChannel("draft-liste"), FakeChannel("draft-selections")
     guild = FakeGuild([laval, granby], [liste, selections])
+    store.approve_guild(guild.id, None)
     store.set_channels(guild.id, liste.id, selections.id)
     store.replace_players(guild.id, [("Patrick Roy", "Granby", "G"), ("Mario Lemieux", "Laval", "C"),
                                      ("Ray Bourque", "Montréal", "D")])
@@ -214,6 +215,7 @@ def empty_league():
     laval, granby, admins = FakeRole("Laval"), FakeRole("Granby"), FakeRole("Admins")
     liste, selections = FakeChannel("draft-liste"), FakeChannel("draft-selections")
     guild = FakeGuild([laval, granby, admins], [liste, selections])
+    store.approve_guild(guild.id, None)
     admin = FakeMember(guild, [], admin=True)
     return bot, store, guild, admin, liste, selections
 
@@ -262,9 +264,13 @@ def fill(modal, **values):
     return modal
 
 
-async def open_panel(bot, guild, admin):
+async def open_panel(bot, guild, admin, draft=True):
+    """Tape /admin. Le panneau s'ouvre sur le menu de la ligue ; avec draft=True, clique aussi sur « Draft »."""
     i = await command(bot, "admin", FakeInteraction(guild, admin))
     assert isinstance(i.view, AdminPanel)
+    assert keys(i.view) == ["draft", "transaction", "shm"] and "Panneau de la ligue" in i.last
+    if draft:
+        await click(i.view, button(i.view, "draft"), i)
     return i
 
 
@@ -579,6 +585,73 @@ def test_wheel_rejects_bad_options(league):
 
 # Le panneau /admin
 
+def test_admin_opens_on_the_league_menu_not_only_the_draft(league):
+    bot, store, guild, _, _, _ = league
+    admin = admin_of(guild)
+    description = next(c for c in bot.tree.get_commands() if c.name == "admin").description
+    assert "ligue" in description and "transactions" in description and "SHM" in description
+
+    async def scenario():
+        panel_i = await open_panel(bot, guild, admin, draft=False)
+        panel = panel_i.view
+        menu = panel_i.last
+        draft = await click(panel, button(panel, "draft"), FakeInteraction(guild, admin))
+        assert keys(panel) == ["choisir", "annuler", "options", "menu"]
+        await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
+        assert keys(panel) == ["choisir", "annuler", "options", "menu"]  # « Retour » revient au draft
+        back = await click(panel, button(panel, "menu"), FakeInteraction(guild, admin))
+        trade = await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
+        return menu, draft.last, back.last, trade
+    menu, draft, back, trade = run(scenario())
+    assert "Panneau de la ligue" in menu and "Draft** : en cours (0 choix faits sur 4)" in menu
+    assert "Transactions" in menu and "rachats, ballottages" in menu and "État : pas activées" in menu
+    assert "draft est en cours" in draft and back == menu
+    # Le bouton du menu ouvre bien la fenêtre de capture (ou explique que la lecture n'est pas installée).
+    assert isinstance(trade.response.modal, CaptureModal) or trade.last == bot_module.NOT_INSTALLED
+
+
+def test_menu_shows_where_the_draft_is_at(empty_league):
+    bot, store, guild, admin, liste, selections = empty_league
+
+    def menu():
+        return run(open_panel(bot, guild, admin, draft=False)).last
+
+    assert "Draft** : à préparer (étape 1 sur 4)" in menu()
+    store.set_channels(guild.id, liste.id, selections.id)
+    assert "Draft** : à préparer (étape 2 sur 4)" in menu()
+    store.replace_players(guild.id, [("Patrick Roy", "Granby", "G")])
+    store.set_order(guild.id, ["laval"])
+    assert "Draft** : prêt à lancer" in menu()
+    store.start_draft(guild.id)
+    store.make_pick(guild.id, 1, store.available_players(guild.id)[0].id)
+    assert "Draft** : terminé" in menu()
+
+
+def test_admin_on_the_menu_stays_there_after_a_change(league):
+    """Après une action, le panneau de l'admin quitte les options pour l'écran du draft,
+    mais celui qui est sur le menu de la ligue y reste."""
+    bot, store, guild, gm_laval, _, _ = league
+    admin = admin_of(guild)
+
+    async def scenario():
+        on_menu_i = await open_panel(bot, guild, admin, draft=False)
+        await confirm(await command(bot, "draft", FakeInteraction(guild, gm_laval), "Roy"))
+        await bot.refresh_panels(guild, actor_id=admin.id)
+        return on_menu_i
+    on_menu_i = run(scenario())
+    assert keys(on_menu_i.view) == ["draft", "transaction", "shm"]
+    assert "en cours (1 choix faits sur 4)" in on_menu_i.edits[-1]
+
+
+def test_help_explains_the_league_panel_to_admins(league):
+    bot, store, guild, _, _, _ = league
+    admin = run(command(bot, "aide", FakeInteraction(guild, admin_of(guild)))).last
+    assert "panneau de la ligue" in admin
+    for name in ("**Draft**", "**Annoncer une transaction**", "**Annonces SHM auto**"):
+        assert name in admin
+
+
 def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
     bot, store, guild, admin, liste, selections = empty_league
     laval, granby, admins = guild.roles
@@ -588,7 +661,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         panel_i = await open_panel(bot, guild, admin)
         panel = panel_i.view
         assert "étape 1 sur 4" in panel_i.last and "Choisir les salons" in panel_i.last
-        assert keys(panel) == ["salons", "transaction", "options"]
+        assert keys(panel) == ["salons", "options", "menu"]
 
         # Étape 1 : salons
         i = await click(panel, button(panel, "salons"), FakeInteraction(guild, admin))
@@ -598,7 +671,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         await fill(modal, list_channel=[liste], picks_channel=[selections]).on_submit(done)
         assert "✅ Liste dans #draft-liste" in done.last and "Importer les joueurs" in done.last
         # le panneau s'est mis à jour tout seul : un seul bouton, celui de l'étape suivante
-        assert "étape 2 sur 4" in panel_i.edits[-1] and keys(panel) == ["joueurs", "transaction", "options"]
+        assert "étape 2 sur 4" in panel_i.edits[-1] and keys(panel) == ["joueurs", "options", "menu"]
 
         # Étape 2 : joueurs
         i = await click(panel, button(panel, "joueurs"), FakeInteraction(guild, admin))
@@ -610,7 +683,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         await confirm(done)
         assert "✅ 2 joueurs publiés" in done.last and "Définir l'ordre du draft" in done.last
         assert "Patrick Roy" in liste.texts()[0]
-        assert "étape 3 sur 4" in panel_i.edits[-1] and keys(panel) == ["ordre", "transaction", "options"]
+        assert "étape 3 sur 4" in panel_i.edits[-1] and keys(panel) == ["ordre", "options", "menu"]
 
         # Étape 3 : ordre. Le draft ne commence pas encore.
         i = await click(panel, button(panel, "ordre"), FakeInteraction(guild, admin))
@@ -622,7 +695,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         assert [p.team for p in store.upcoming_picks(guild.id, 10)] == ["Laval", "Granby", "Granby", "Laval"]
         assert not any("Le draft commence" in t for t in selections.texts())
         assert selections.with_button() == []
-        assert "Tout est prêt" in panel_i.edits[-1] and keys(panel) == ["lancer", "transaction", "options"]
+        assert "Tout est prêt" in panel_i.edits[-1] and keys(panel) == ["lancer", "options", "menu"]
 
         # Avant le lancement, personne ne peut choisir.
         early = await command(bot, "draft", FakeInteraction(guild, gm_laval), "Roy")
@@ -638,7 +711,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         assert "Délai de **8 h**" in done.last and admins.mention in done.last
         assert store.timer(guild.id) == (8 * 3600, admins.id)
         assert selections.texts() == []  # rien d'annoncé avant le lancement
-        assert keys(panel) == ["lancer", "transaction", "options"]  # retour à l'écran principal
+        assert keys(panel) == ["lancer", "options", "menu"]  # retour à l'écran principal
         assert "8 h par choix" in panel_i.edits[-1]
 
         # Étape 4 : lancer
@@ -649,7 +722,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         assert "Le draft commence" in selections.texts()[-1] and laval.mention in selections.texts()[-1]
         assert len(selections.with_button()) == 1
         assert store.deadline(guild.id) is not None
-        assert keys(panel) == ["choisir", "annuler", "transaction", "options"]
+        assert keys(panel) == ["choisir", "annuler", "options", "menu"]
         assert "Le draft est en cours" in panel_i.edits[-1]
         return panel_i
     run(scenario())
@@ -689,7 +762,7 @@ def test_launch_needs_channels(league):
     i, panel = run(scenario())
     assert "pas encore prêt" in i.last and "Choisir les salons" in i.last and i.view is None
     assert not store.is_started(guild.id)
-    assert keys(panel) == ["salons", "transaction", "options"]
+    assert keys(panel) == ["salons", "options", "menu"]
 
 
 def test_new_order_during_draft_waits_for_a_new_launch(league):
@@ -710,7 +783,7 @@ def test_new_order_during_draft_waits_for_a_new_launch(league):
     assert selections.with_button() == []  # l'ancien bouton « Faire mon choix » est retiré
     assert "pas encore commencé" in refused.last
     assert store.made_picks_count(guild.id) == 0
-    assert keys(panel) == ["lancer", "transaction", "options"]
+    assert keys(panel) == ["lancer", "options", "menu"]
 
 
 def test_channels_must_differ_and_bot_must_have_access(empty_league):
@@ -750,7 +823,7 @@ def test_more_options_keeps_every_feature_and_back_returns(league):
         panel_i = await open_panel(bot, guild, admin)
         panel = panel_i.view
         more = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
-        assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "shm", "retour"]
+        assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"]
         assert "Plus d'options" in more.last and "#draft-liste" in more.last and "4 choix" in more.last
         modals = {}
         for key, modal in (("salons", ChannelsModal), ("joueurs", PlayersModal), ("ordre", OrderModal),
@@ -760,7 +833,7 @@ def test_more_options_keeps_every_feature_and_back_returns(league):
             modals[key] = i.response.modal
         assert modals["salons"].list_channel.default_values  # les salons actuels sont déjà choisis
         back = await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
-        assert keys(panel) == ["choisir", "annuler", "transaction", "options"] and "en cours" in back.last
+        assert keys(panel) == ["choisir", "annuler", "options", "menu"] and "en cours" in back.last
     run(scenario())
 
 
@@ -966,14 +1039,14 @@ def test_panel_says_when_draft_is_over_and_last_pick_can_still_be_undone(league)
         await confirm(await command(bot, "draft", FakeInteraction(guild, gm_laval), "Roy"))
         panel_i = await open_panel(bot, guild, admin_of(guild))
         panel = panel_i.view
-        assert keys(panel) == ["annuler", "transaction", "options"]
+        assert keys(panel) == ["annuler", "options", "menu"]
         await click(panel, button(panel, "options"), FakeInteraction(guild, panel_i.user))
         back = await click(panel, button(panel, "retour"), FakeInteraction(guild, panel_i.user))
         undo = await click(panel, button(panel, "annuler"), FakeInteraction(guild, panel_i.user))
         await confirm(undo)
         return panel_i, back
     panel_i, back = run(scenario())
-    assert "draft est terminé" in panel_i.sent[0][0] and "draft est terminé" in back.last
+    assert "Draft** : terminé" in panel_i.sent[0][0] and "draft est terminé" in panel_i.sent[1][0] and "draft est terminé" in back.last
     assert store.made_picks_count(guild.id) == 0 and "en cours" in panel_i.edits[-1]
 
 
@@ -1009,19 +1082,20 @@ def test_windows_respect_discord_limits():
 
 
 def all_panel_screens():
-    """Le panneau à chaque étape du draft, et ses options."""
+    """Le menu de la ligue, l'écran du draft à chaque étape, et ses options."""
     store = Store(":memory:")
     bot = DraftBot(store, backup_dir=None)
     liste, selections = FakeChannel("liste"), FakeChannel("selections")
     guild = FakeGuild([FakeRole("Laval")], [liste, selections])
     screens = []
 
-    def snap(more=False):
+    def snap(screen="draft"):
         panel = AdminPanel(bot, 1, guild.id)
-        panel.more = more
+        panel.screen = screen
         assert panel.build(guild)
         screens.append(panel)
 
+    snap("menu")
     snap()
     store.set_channels(guild.id, liste.id, selections.id)
     snap()
@@ -1033,16 +1107,19 @@ def all_panel_screens():
     snap()
     store.make_pick(guild.id, 1, store.available_players(guild.id)[0].id)
     snap()
-    snap(more=True)
+    snap("options")
+    snap("menu")
     return screens
 
 
 def test_every_panel_screen_shows_few_buttons():
     phases = [[item.key for item in panel.children] for panel in all_panel_screens()]
     assert phases == [
-        ["salons", "transaction", "options"], ["joueurs", "transaction", "options"], ["ordre", "transaction", "options"], ["lancer", "transaction", "options"],
-        ["choisir", "annuler", "transaction", "options"], ["annuler", "transaction", "options"],
-        ["salons", "joueurs", "ordre", "delai", "echange", "journal", "shm", "retour"],
+        ["draft", "transaction", "shm"],
+        ["salons", "options", "menu"], ["joueurs", "options", "menu"], ["ordre", "options", "menu"], ["lancer", "options", "menu"],
+        ["choisir", "annuler", "options", "menu"], ["annuler", "options", "menu"],
+        ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"],
+        ["draft", "transaction", "shm"],
     ]
 
 
@@ -1109,6 +1186,8 @@ class SyncRecorder:
 class SyncGuild:
     def __init__(self, guild_id):
         self.id, self.name = guild_id, f"serveur {guild_id}"
+        self.system_channel, self.text_channels, self.member_count, self.owner_id = None, [], 3, None
+        self.me = FakeJoinMember(audit=False)
 
     async def leave(self):
         raise AssertionError("le bot ne doit jamais quitter un serveur tout seul")
@@ -1248,18 +1327,18 @@ def test_discord_finds_the_new_buttons_after_each_screen_change(league):
     async def scenario():
         views = ViewStore(None)
         panel = AdminPanel(bot, 1, guild.id)
+        panel.screen = "draft"
         panel.build(guild)
         views.add_view(panel, 42)  # comme à l'envoi du panneau
         main = set(views._views[42])
-        panel.more = True
+        panel.screen = "options"
         panel.build(guild)
         views.add_view(panel, 42)  # comme à chaque modification du panneau
         more = set(views._views[42])
         panel.stop()
         return main, more, {(2, item.custom_id) for item in panel.children}
     main, more, current = run(scenario())
-    assert main == {(2, "admin:choisir"), (2, "admin:annuler"), (2, "admin:transaction"),
-                    (2, "admin:options")}
+    assert main == {(2, "admin:choisir"), (2, "admin:annuler"), (2, "admin:options"), (2, "admin:menu")}
     assert more == current and (2, "admin:choisir") not in more and (2, "admin:retour") in more
 
 
@@ -1297,12 +1376,13 @@ def nhl(monkeypatch):
     roles = [FakeRole(name) for name in NHL_ROLES]
     trades = FakeChannel("transactions")
     guild = FakeGuild(roles, [trades])
+    store.approve_guild(guild.id, None)
     return bot, store, guild, admin_of(guild), trades, {r.name: r for r in roles}
 
 
 async def send_capture(bot, guild, admin, channel, image=None):
     """L'admin clique sur « Annoncer une transaction » dans /admin, puis envoie sa capture."""
-    panel = (await open_panel(bot, guild, admin)).view
+    panel = (await open_panel(bot, guild, admin, draft=False)).view
     opened = await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
     modal = opened.response.modal
     assert isinstance(modal, CaptureModal), opened.sent
@@ -1453,7 +1533,7 @@ def test_capture_reading_not_installed(nhl, monkeypatch):
     monkeypatch.setattr(bot_module, "capture_installed", lambda: False)
 
     async def scenario():
-        panel = (await open_panel(bot, guild, admin)).view
+        panel = (await open_panel(bot, guild, admin, draft=False)).view
         return await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
     i = run(scenario())
     assert i.response.modal is None and "pip install -U -r requirements.txt" in i.last
@@ -1616,16 +1696,19 @@ def shm_league():
     roles = [FakeRole(name) for name in SHM_ROLES]
     trades = FakeChannel("transactions")
     guild = FakeGuild(roles, [trades])
+    store.approve_guild(guild.id, None)
     bot.get_guild = lambda guild_id: guild if guild_id == guild.id else None
-    return bot, store, guild, admin_of(guild), trades, {r.name: r for r in roles}, site
+    # Seul le créateur du bot branche SHM : ici, c'est lui qui configure.
+    admin = admin_of(guild)
+    bot.owner_ids = {admin.id}
+    return bot, store, guild, admin, trades, {r.name: r for r in roles}, site
 
 
 SAME = object()
 
 
 async def setup_shm_from_panel(bot, guild, admin, channel, address, waivers=SAME, buyouts=SAME, standings=None):
-    panel = (await open_panel(bot, guild, admin)).view
-    await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+    panel = (await open_panel(bot, guild, admin, draft=False)).view
     opened = await click(panel, button(panel, "shm"), FakeInteraction(guild, admin))
     modal = opened.response.modal
     assert isinstance(modal, ShmModal), opened.sent
@@ -1665,20 +1748,23 @@ def test_shm_setup_keeps_old_trades_quiet_then_announces_new_ones(shm_league):
     assert [a for _, _, a, _ in store.log_entries(guild.id)].count("transaction SHM") == 2
 
 
-def test_shm_status_is_shown_in_more_options(shm_league):
+def test_shm_status_is_shown_in_the_league_menu(shm_league):
     bot, store, guild, admin, channel, roles, site = shm_league
 
     async def scenario():
+        before = (await open_panel(bot, guild, admin, draft=False)).last
         await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        panel = (await open_panel(bot, guild, admin)).view
-        ok = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        panel_i = await open_panel(bot, guild, admin, draft=False)
+        panel = panel_i.view
+        ok = panel_i.last
         site.error = "Je n'arrive pas à joindre SHM en ce moment."
         await bot.check_shm()
-        await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
-        failing = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
-        return ok.last, failing.last
-    ok, failing = run(scenario())
-    assert "Annonces SHM automatiques : ligue `lnhs_2` (✅ lu à l'instant)" in ok
+        await click(panel, button(panel, "draft"), FakeInteraction(guild, admin))
+        failing = await click(panel, button(panel, "menu"), FakeInteraction(guild, admin))
+        return before, ok, failing.last
+    before, ok, failing = run(scenario())
+    assert "État : pas activées" in before
+    assert "État : ligue `lnhs_2` (✅ lu à l'instant)" in ok
     assert "Transactions → #transactions · Ballottage → #transactions · Rachats → #transactions · Classement → non" in ok
     assert "⚠️ Je n'arrive pas à joindre SHM" in failing
 
@@ -1762,9 +1848,13 @@ def test_two_servers_on_the_same_league_read_it_once(shm_league):
     guilds = {guild.id: guild, other.id: other}
     bot.get_guild = guilds.get
 
+    store.approve_guild(other.id, None)
+    other_admin = admin_of(other)
+    bot.owner_ids.add(other_admin.id)
+
     async def scenario():
         await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        await setup_shm_from_panel(bot, other, admin_of(other), other_channel, "lnhs_2")
+        await setup_shm_from_panel(bot, other, other_admin, other_channel, "lnhs_2")
         site.add_trade(new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"]))
         site.requests.clear()
         site.other_requests.clear()
@@ -1809,10 +1899,10 @@ def test_shm_can_be_turned_off(shm_league):
 def test_shm_button_explains_when_the_bot_has_no_shm_account(league):
     bot, store, guild, _, _, _ = league
     admin = admin_of(guild)
+    bot.owner_ids = {admin.id}
 
     async def scenario():
-        panel = (await open_panel(bot, guild, admin)).view
-        await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
+        panel = (await open_panel(bot, guild, admin, draft=False)).view
         return await click(panel, button(panel, "shm"), FakeInteraction(guild, admin))
     i = run(scenario())
     assert i.response.modal is None and "SHM_USERNAME" in i.last
@@ -1821,9 +1911,14 @@ def test_shm_button_explains_when_the_bot_has_no_shm_account(league):
 def test_shm_account_comes_from_env():
     assert bot_module.shm_client_from_env({}) is None
     client = bot_module.shm_client_from_env({"SHM_USERNAME": " HockeySimsTools ", "SHM_PASSWORD": "secret"})
-    assert client.username == "HockeySimsTools" and client.password == "secret"
+    assert client.username == "HockeySimsTools" and client.password == "secret" and client.key == ""
     with pytest.raises(bot_module.ConfigError):
         bot_module.shm_client_from_env({"SHM_USERNAME": "HockeySimsTools"})
+    # La clé convenue avec les admins de SHM, pour passer Cloudflare.
+    keyed = bot_module.shm_client_from_env({"SHM_USERNAME": "a", "SHM_PASSWORD": "b", "SHM_BOT_KEY": " k3y-Xy9 "})
+    assert keyed.key == "k3y-Xy9"
+    with pytest.raises(bot_module.ConfigError):
+        bot_module.shm_client_from_env({"SHM_USERNAME": "a", "SHM_PASSWORD": "b", "SHM_BOT_KEY": "clé secrète"})
 
 
 # Les emotes d'équipe
@@ -2131,18 +2226,27 @@ def test_standings_are_posted_then_edited_after_each_simulation(shm_league):
         await bot.check_shm()
         after_sim = list(standings.texts())
         await bot.check_shm()
-        return i.last, first, unchanged, after_sim
-    text, first, unchanged, after_sim = run(scenario())
+        same = list(standings.texts())
+        # Sans nouvelle partie jouée, SHM change l'ordre de deux équipes à égalité : pas de flèche de plus.
+        rows = west()
+        rows[3], rows[4] = rows[4], rows[3]
+        await bot.check_shm()
+        shuffled = list(standings.texts())
+        return i.last, first, unchanged, after_sim, same, shuffled
+    text, first, unchanged, after_sim, same, shuffled = run(scenario())
     assert "Classement : #classement" in text
     assert len(first) == 1 and first == unchanged
     assert first[0].startswith("📊 **Classement**")
     assert "**Association de l'Ouest**\n` 1.` " + str(ari) + " Arizona Coyotes — **0 pt** · 0 PJ · 0-0-0\n" in first[0]
     assert "▲" not in first[0].split("\n", 2)[2]
     # Le même message est modifié, pas un nouveau, avec une flèche pour qui a bougé.
-    assert len(after_sim) == 1 and standings.texts() == after_sim
+    assert len(after_sim) == 1 and len(standings.texts()) == 1
     lines = after_sim[0].splitlines()
     assert f"` 3.` {ari} Arizona Coyotes — **2 pts** · 1 PJ · 0-0-0 🔴 ▼2" in lines
     assert any(line.startswith("` 1.`") and line.endswith("🟢 ▲1") for line in lines)
+    assert same == after_sim
+    assert len(shuffled) == 1
+    assert shuffled[0].count("▲") + shuffled[0].count("▼") == after_sim[0].count("▲") + after_sim[0].count("▼")
     assert channel.texts() == []
 
 
@@ -2181,6 +2285,9 @@ def test_long_standings_are_split_without_cutting_a_division():
     assert len(messages) > 1 and all(len(m) <= 2000 for m in messages)
     assert sum(m.count("**Division ") for m in messages) == 8
     assert all(m.count("Arizona Coyotes") % 8 == 0 for m in messages)
+    # La ligne du bas n'est jamais seule dans un message.
+    assert all("**Division " in m for m in messages)
+    assert messages[-1].endswith(moves.STANDINGS_FOOTER)
 
 
 def test_draft_pick_announcement_shows_the_team_emote(league):
@@ -2199,3 +2306,273 @@ def test_draft_pick_announcement_shows_the_team_emote(league):
     run(scenario())
     assert any(t.startswith(f"🏒 {emote} **Penguins** est fier de sélectionner **Mario Lemieux**")
                for t in selections.texts())
+
+
+# Un nouveau serveur invite le bot : bienvenue chez eux, « Nouveau client » en privé au créateur du bot,
+# et le panneau /admin reste bloqué tant que le créateur n'a pas activé le serveur.
+
+from draft_bot.bot import ApproveServerButton  # noqa: E402
+
+
+class FakeUser:
+    def __init__(self, name, refuse_dm=False):
+        self.id = next(ids)
+        self.name = name
+        self.dms = []
+        self.refuse_dm = refuse_dm
+
+    async def send(self, content, **kwargs):
+        if self.refuse_dm:
+            raise discord.Forbidden(FakeHTTPResponse(), "messages privés fermés")
+        self.dms.append((content, kwargs.get("view")))
+
+
+class FakeJoinPermissions:
+    def __init__(self, write=True, invite=False, audit=False):
+        self.view_channel = self.send_messages = write
+        self.create_instant_invite = invite
+        self.view_audit_log = audit
+
+
+class FakeJoinMember:
+    def __init__(self, audit):
+        self.guild_permissions = FakeJoinPermissions(audit=audit)
+
+
+class FakeInvite:
+    url = "https://discord.gg/abc123"
+
+
+class FakeJoinChannel(FakeChannel):
+    def __init__(self, name, position, write=True, invite=False):
+        super().__init__(name, bot_allowed=write)
+        self.position, self.invite = position, invite
+        self.invites = []
+
+    def permissions_for(self, member):
+        return FakeJoinPermissions(write=self.bot_allowed, invite=self.invite)
+
+    async def create_invite(self, **kwargs):
+        self.invites.append(kwargs)
+        return FakeInvite()
+
+
+class FakeAuditEntry:
+    def __init__(self, target, user):
+        self.target, self.user = target, user
+
+
+class FakeJoinGuild:
+    """Un serveur qui vient d'inviter le bot."""
+
+    def __init__(self, name, channels, system_channel=None, audit_entries=None, owner=None):
+        self.id = next(ids)
+        self.name = name
+        self.text_channels = channels
+        self.channels = {c.id: c for c in channels}
+        self.system_channel = system_channel
+        self.member_count = 42
+        self.owner_id = owner.id if owner else None
+        self.audit_entries = audit_entries
+        self.me = FakeJoinMember(audit=audit_entries is not None)
+        self.roles = []
+
+    def get_channel(self, channel_id):
+        return self.channels.get(channel_id)
+
+    def get_role(self, role_id):
+        return None
+
+    def get_member(self, user_id):
+        return None
+
+    async def audit_logs(self, limit, action):
+        assert action == discord.AuditLogAction.bot_add
+        for entry in self.audit_entries or []:
+            yield entry
+
+
+@pytest.fixture
+def welcome():
+    """Le bot, son créateur (William) et un serveur qui vient de l'inviter."""
+    store = Store(":memory:")
+    bot = DraftBot(store, backup_dir=None, support_url="https://discord.gg/support")
+    bot.backup = lambda reason: None
+    william, bot_user, commissioner, guild_owner = (FakeUser("william"), FakeUser("Hockey Sims Tools"),
+                                                    FakeUser("tyler"), FakeUser("patron"))
+    users = {u.id: u for u in (william, commissioner, guild_owner)}
+    bot.get_user = users.get
+    bot._connection.user = bot_user
+    bot.owner_ids, bot.owner_name = {william.id}, "william"
+    general = FakeJoinChannel("général", position=0, invite=True)
+    guild = FakeJoinGuild("Ligue LHJMQ", [FakeJoinChannel("règlements", 1, write=False), general],
+                          system_channel=general, owner=guild_owner,
+                          audit_entries=[FakeAuditEntry(FakeUser("autre bot"), guild_owner),
+                                         FakeAuditEntry(bot_user, commissioner)])
+    guilds = {guild.id: guild}
+    bot.get_guild = guilds.get
+    bot.sync_guild = lambda g: asyncio.sleep(0, result=True)
+    return bot, store, guild, william, general
+
+
+def test_new_server_gets_a_welcome_and_william_gets_new_client_dm(welcome):
+    bot, store, guild, william, general = welcome
+    run(bot.on_guild_join(guild))
+    # Chez le client : un seul message, qui dit de passer par William et comment le joindre.
+    [text] = general.texts()
+    assert "Merci d'avoir ajouté Hockey Sims Tools" in text and "**william**" in text
+    assert "https://discord.gg/support" in text
+    assert general.sent_mentions == [bot_module.NO_PINGS]
+    # Chez William : « Nouveau client » avec tout ce qu'il faut pour aller les voir.
+    [(dm, view)] = william.dms
+    assert "Nouveau client" in dm and "Ligue LHJMQ" in dm
+    assert "Membres : 42" in dm and "Propriétaire du serveur : **patron**" in dm
+    assert "Ajouté par : **tyler**" in dm  # pas « autre bot » : la bonne ligne du journal
+    assert "https://discord.gg/abc123" in dm
+    assert general.invites[0]["max_age"] == 7 * 24 * 3600
+    [item] = view.children
+    assert item.custom_id == f"serveur:activer:{guild.id}"
+    assert store.was_notified(guild.id) and not store.is_approved(guild.id)
+
+
+def test_new_server_without_permissions_still_warns_william(welcome):
+    bot, store, guild, william, general = welcome
+    general.bot_allowed, general.invite = False, False
+    guild.audit_entries = None
+    guild.me = FakeJoinMember(audit=False)
+    run(bot.on_guild_join(guild))
+    assert general.texts() == []
+    [(dm, _)] = william.dms
+    assert "Ajouté par : inconnu" in dm and "demande-leur un lien" in dm
+    assert "n'ont pas reçu le message de bienvenue" in dm
+
+
+def test_welcome_goes_to_first_writable_channel_when_no_system_channel(welcome):
+    bot, store, guild, william, general = welcome
+    guild.system_channel = None
+    later = FakeJoinChannel("discussion", position=5)
+    guild.text_channels = [later, general]
+    run(bot.on_guild_join(guild))
+    assert len(general.texts()) == 1 and later.texts() == []
+
+
+def test_william_with_closed_dms_does_not_break_the_join(welcome):
+    bot, store, guild, william, general = welcome
+    william.refuse_dm = True
+    run(bot.on_guild_join(guild))
+    assert len(general.texts()) == 1 and store.was_notified(guild.id)
+
+
+def test_admin_panel_is_locked_until_william_activates_the_server(welcome):
+    bot, store, guild, william, general = welcome
+    run(bot.on_guild_join(guild))
+    admin = FakeMember(guild, [], admin=True)
+    i = run(command(bot, "admin", FakeInteraction(guild, admin)))
+    assert not isinstance(i.view, AdminPanel) and i.view is None
+    assert "pas encore activé" in i.last and "**william**" in i.last and "https://discord.gg/support" in i.last
+    # Un admin du serveur ne peut pas cliquer sur le bouton d'activation (s'il le voyait).
+    item = ApproveServerButton(guild.id)
+    refused = FakeInteraction(guild, admin)
+    refused.client = bot
+    assert not run(item.interaction_check(refused))
+    assert "Seul le créateur" in refused.last and not store.is_approved(guild.id)
+
+
+def test_william_activates_from_admin_in_their_server_and_gets_the_panel(welcome):
+    bot, store, guild, william, general = welcome
+    william.guild_permissions = FakePermissions(manage_guild=True)
+    i = run(command(bot, "admin", FakeInteraction(guild, william)))
+    assert "Tu es le créateur du bot" in i.last
+    [item] = i.view.children
+    click_i = FakeInteraction(guild, william)
+    click_i.client, click_i.message = bot, None
+    assert run(item.interaction_check(click_i))
+    run(item.callback(click_i))
+    assert store.is_approved(guild.id) and isinstance(click_i.view, AdminPanel)
+    assert "est activé" in click_i.last
+    # Maintenant, les admins du serveur ont le panneau normal.
+    admin = FakeMember(guild, [], admin=True)
+    assert isinstance(run(command(bot, "admin", FakeInteraction(guild, admin))).view, AdminPanel)
+    assert store.log_entries(guild.id)[-1][2:] == ("serveur", "activé par le créateur du bot")
+
+
+def test_william_activates_from_the_private_message(welcome):
+    bot, store, guild, william, general = welcome
+    run(bot.on_guild_join(guild))
+    [(dm, view)] = william.dms
+    [item] = view.children
+
+    class DM:
+        content = dm
+    click_i = FakeInteraction(guild, william)
+    click_i.guild, click_i.guild_id, click_i.client, click_i.message = None, None, bot, DM()
+    run(item.callback(click_i))
+    assert store.is_approved(guild.id)
+    assert click_i.last.startswith("🔔 **Nouveau client!**") and "**Ligue LHJMQ** est activé" in click_i.last
+    assert click_i.view is None  # le bouton disparaît
+    again = FakeInteraction(guild, william)
+    again.guild, again.guild_id, again.client, again.message = None, None, bot, DM()
+    run(ApproveServerButton(guild.id).callback(again))
+    assert "était déjà activé" in again.last
+
+
+def test_activation_button_works_after_a_restart():
+    template = ApproveServerButton.__discord_ui_compiled_template__
+    match = template.fullmatch("serveur:activer:1564525571302629456")
+    item = run(ApproveServerButton.from_custom_id(None, None, match))
+    assert item.guild_id == 1564525571302629456 and item.item.custom_id == "serveur:activer:1564525571302629456"
+    assert template.fullmatch("draft:faire-mon-choix") is None
+
+
+def test_first_start_keeps_existing_servers_working_but_not_later_ones(welcome, fake_guilds):
+    bot, store, guild, william, general = welcome
+    old_league = FakeJoinGuild("Ligue de William", [FakeJoinChannel("général", 0)])
+    bot.__dict__["joined"] = [old_league]
+    run(bot.on_ready())
+    assert store.is_approved(old_league.id) and william.dms == [] and old_league.text_channels[0].texts() == []
+    # Un serveur qui invite le bot pendant qu'il est éteint : accueilli au démarrage suivant, une seule fois.
+    bot.__dict__["joined"] = [old_league, guild]
+    run(bot.on_ready())
+    run(bot.on_ready())  # reconnexion
+    assert not store.is_approved(guild.id)
+    assert len(william.dms) == 1 and len(general.texts()) == 1
+
+
+def test_reinvited_active_server_is_not_welcomed_again(welcome):
+    bot, store, guild, william, general = welcome
+    store.approve_guild(guild.id, william.id)
+    run(bot.on_guild_join(guild))
+    assert general.texts() == []
+    [(dm, view)] = william.dms
+    assert "réinvité" in dm and view is None
+
+
+def test_william_is_told_when_the_bot_is_removed(welcome):
+    bot, store, guild, william, general = welcome
+    bot.tree.clear_commands = lambda guild: None
+    run(bot.on_guild_remove(guild))
+    assert "retiré du serveur **Ligue LHJMQ**" in william.dms[0][0]
+
+
+def test_only_william_can_connect_shm(shm_league):
+    bot, store, guild, william, channel, roles, site = shm_league
+    bot.owner_name = "william"
+    server_admin = admin_of(guild)
+
+    async def scenario():
+        panel = (await open_panel(bot, guild, server_admin, draft=False)).view
+        opened = await click(panel, button(panel, "shm"), FakeInteraction(guild, server_admin))
+        # Même avec une vieille fenêtre ouverte, l'envoi est revérifié.
+        direct = FakeInteraction(guild, server_admin)
+        await bot_module.setup_shm(bot, direct, "lnhs_2", channel)
+        stop = FakeInteraction(guild, server_admin)
+        await bot_module.setup_shm(bot, stop, "", channel)
+        return opened, direct, stop
+    store.set_shm_league(guild.id, "lnhs_2")
+    opened, direct, stop = run(scenario())
+    assert opened.response.modal is None and "seulement par **william**" in opened.last
+    assert "seulement par **william**" in direct.last and "seulement par **william**" in stop.last
+    assert store.shm_league(guild.id) == "lnhs_2" and site.requests == []
+    # William, lui, branche la ligue normalement.
+    i, _ = run(setup_shm_from_panel(bot, guild, william, channel, "lnhs_2"))
+    assert "C'est branché" in i.last
