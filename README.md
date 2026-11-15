@@ -24,7 +24,7 @@ Les réponses du bot sont privées : les salons restent propres. Après un choix
 | `/aide` | Tous | Explique en quelques lignes comment faire son choix (et le panneau de la ligue, pour les admins) |
 | `/statut` | Tous | Qui est au tour, le temps limite et les prochains choix. L'équipe au tour y trouve aussi le bouton **Faire mon choix** |
 | `/draft joueur` | Équipe au tour | Pour ceux qui préfèrent taper : repêcher un joueur par son nom |
-| `/roue choix titre` | Tous | Tirer au sort une option, chances égales (ex. : `ott, stl`, titre `gambrell`). Résultat public et noté au journal |
+| `/roue choix titre` | Tous | Tirer au sort une option, chances égales (ex. : `ott, stl`, titre `gambrell`). Une roue animée tourne une seule fois et s'arrête sur le gagnant (tiré et noté au journal avant l'animation). Résultat public |
 
 « Admin » veut dire la permission *Gérer le serveur*, revérifiée à chaque clic. Toute action qui change le draft demande une confirmation par bouton.
 

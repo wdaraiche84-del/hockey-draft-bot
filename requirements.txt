@@ -1,5 +1,7 @@
 discord.py>=2.7
 python-dotenv>=1.0
+# La roue animée de /roue (image GIF). La police DejaVu est fournie dans draft_bot/polices.
+pillow>=10.1
 # Lecture de l'historique des transactions sur le site SHM.
 beautifulsoup4>=4.12
 # Lecture gratuite des captures de transactions SHM, directement sur l'ordinateur du bot.
