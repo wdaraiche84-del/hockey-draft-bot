@@ -1,0 +1,37 @@
+# Le bot Discord, lancé au démarrage du serveur et relancé s'il s'arrête.
+[Unit]
+Description=Bot Discord Hockey Sims Tools
+Wants=network-online.target
+After=network-online.target
+# Pas de limite au nombre de relances : après une panne d'internet, il finit toujours par revenir.
+StartLimitIntervalSec=0
+
+[Service]
+User=hockeybot
+Group=hockeybot
+WorkingDirectory=/opt/hockey-bot/actuelle
+EnvironmentFile=/etc/hockey-bot/secrets.env
+Environment=DATA_DIR=/data
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TZ=America/Toronto
+Environment=LANG=C.UTF-8
+ExecStart=/opt/hockey-bot/actuelle/.venv/bin/python -m draft_bot
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+# Protections : le bot ne peut écrire que dans /data (sa base) et son dossier temporaire.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/data
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
