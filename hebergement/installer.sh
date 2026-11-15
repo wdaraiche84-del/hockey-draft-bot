@@ -82,31 +82,8 @@ etape "4/8 Sécurité : pare-feu, fail2ban, mises à jour de sécurité automati
 ufw allow OpenSSH > /dev/null
 ufw --force enable > /dev/null
 systemctl enable --now fail2ban > /dev/null 2>&1 || true
-cat > /etc/apt/apt.conf.d/52hockey-bot <<'EOF'
-// Mises à jour de sécurité d'Ubuntu chaque nuit (3 h 30 à 4 h) ; redémarrage à 5 h seulement si une mise à jour l'exige.
-APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
-Unattended-Upgrade::Automatic-Reboot "true";
-Unattended-Upgrade::Automatic-Reboot-Time "05:00";
-EOF
-# Les mises à jour de sécurité la nuit, pas entre 6 h et 7 h comme Ubuntu le fait de base.
-mkdir -p /etc/systemd/system/apt-daily-upgrade.timer.d /etc/systemd/system/apt-daily-upgrade.service.d
-cat > /etc/systemd/system/apt-daily-upgrade.timer.d/hockey-bot.conf <<'EOF'
-# Hockey Sims Tools : mises à jour de sécurité la nuit, pas pendant que les ligues utilisent le bot.
-[Timer]
-OnCalendar=
-OnCalendar=*-*-* 03:30
-RandomizedDelaySec=30m
-EOF
-# Juste après ces mises à jour : relancer le bot seulement s'il utilise une bibliothèque remplacée.
-cat > /etc/systemd/system/apt-daily-upgrade.service.d/hockey-bot.conf <<'EOF'
-[Service]
-ExecStartPost=-/usr/local/sbin/hockey-bot-nuit
-EOF
-systemctl daemon-reload
-mkdir -p /etc/systemd/journald.conf.d
-printf '[Journal]\nSystemMaxUse=300M\n' > /etc/systemd/journald.conf.d/hockey-bot.conf
-systemctl restart systemd-journald || true
+# Mises à jour de sécurité la nuit, journal limité, etc. : voir reglages.sh (appliqué à l'étape 6,
+# puis tout seul par la mise à jour automatique quand ces réglages changent).
 ufw status | head -n 1
 
 etape "5/8 Utilisateur du bot et dossiers"
@@ -129,11 +106,9 @@ echo "Dernière version : ${SHA:0:7} « $(git --git-dir="$BASE/depot.git" log -1
 # Les outils du serveur viennent de la même version que le bot.
 OUTILS=$(mktemp -d)
 git --git-dir="$BASE/depot.git" archive "$SHA" hebergement | tar -x --no-same-permissions --no-same-owner -C "$OUTILS"
-install -m 755 "$OUTILS/hebergement/maj.sh" /usr/local/sbin/hockey-bot-maj
-install -m 755 "$OUTILS/hebergement/bot.sh" /usr/local/bin/bot
-install -m 755 "$OUTILS/hebergement/nuit.sh" /usr/local/sbin/hockey-bot-nuit
-install -m 644 "$OUTILS/hebergement/hockey-bot.service" "$OUTILS/hebergement/hockey-bot-maj.service" \
-    "$OUTILS/hebergement/hockey-bot-maj.timer" /etc/systemd/system/
+# Réglages du serveur, outils (« bot », mises à jour) et services. Ensuite, la mise à jour
+# automatique les réapplique toute seule quand ils changent : plus jamais besoin de cette commande.
+bash "$OUTILS/hebergement/reglages.sh" "$OUTILS/hebergement"
 rm -rf "$OUTILS"
 systemctl daemon-reload
 systemctl enable hockey-bot.service > /dev/null 2>&1

@@ -213,7 +213,9 @@ Commandes sur le serveur (taper `bot` pour la liste) :
 | `bot retour` | Revenir tout de suite à la version d'avant ; les mises à jour automatiques se mettent en pause |
 | `bot reprendre` | Relancer les mises à jour automatiques et installer la dernière version |
 
-Relancer la commande d'installation est sans danger : elle garde les secrets et la base, et met à jour les outils du serveur.
+**Réglages du serveur automatiques** : les réglages du serveur (`hebergement/reglages.sh` : mises à jour de sécurité la nuit, outils `bot`, services…) sont réappliqués tout seuls par la mise à jour automatique quand une nouvelle version les change. Il n'y a donc plus jamais besoin de recoller la commande d'installation. Ils ne relancent jamais le bot ; tout changement est noté dans l'historique (`bot etat`).
+
+Relancer la commande d'installation reste sans danger : elle garde les secrets et la base.
 
 ## Hébergement sur Railway
 

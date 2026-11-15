@@ -50,15 +50,74 @@ def test_ubuntu_ne_relance_jamais_le_bot_lui_meme():
     assert texte.index("/etc/needrestart/conf.d/hockey-bot.conf") < texte.index("\napt-get ")
 
 
+def _reglages():
+    return (HEBERGEMENT / "reglages.sh").read_text(encoding="utf-8")
+
+
 def test_mises_a_jour_de_securite_la_nuit_puis_bot_relance_seulement_si_besoin():
-    texte = _installer()
-    minuteur = texte.split("apt-daily-upgrade.timer.d/hockey-bot.conf <<'EOF'")[1].split("\nEOF")[0]
+    texte = _reglages()
+    minuteur = texte.split("apt-daily-upgrade.timer.d/hockey-bot.conf 644 <<'EOF'")[1].split("\nEOF")[0]
     # « OnCalendar= » vide d'abord : sinon l'heure d'Ubuntu (6 h à 7 h) resterait en plus de la nôtre.
     assert "OnCalendar=\nOnCalendar=*-*-* 03:30" in minuteur and "RandomizedDelaySec=30m" in minuteur
     assert "ExecStartPost=-/usr/local/sbin/hockey-bot-nuit" in texte
-    assert 'install -m 755 "$OUTILS/hebergement/nuit.sh" /usr/local/sbin/hockey-bot-nuit' in texte
+    assert "copier nuit.sh /usr/local/sbin/hockey-bot-nuit 755" in texte
     # Le redémarrage d'Ubuntu (si une mise à jour l'exige) reste après la fenêtre des mises à jour.
     assert 'Automatic-Reboot-Time "05:00"' in texte
+    # Aussi dans les réglages réappliqués tout seuls, et avant d'installer quoi que ce soit.
+    assert "$nrconf{override_rc}{qr(^hockey-bot)} = 0;" in texte
+    assert texte.index("needrestart/conf.d/hockey-bot.conf") < texte.index("apt-get -o")
+
+
+# Les réglages du serveur s'appliquent tout seuls à chaque version : plus de commande à recoller.
+
+def test_l_installation_et_la_mise_a_jour_utilisent_les_memes_reglages():
+    assert 'bash "$OUTILS/hebergement/reglages.sh" "$OUTILS/hebergement"' in _installer()
+    maj = (HEBERGEMENT / "maj.sh").read_text(encoding="utf-8")
+    principal = maj.split("\nprincipal() {")[1].split("\n}")[0]
+    # Après chaque passage (nouvelle version ou pas), sauf en pause et pour « bot retour ».
+    assert principal.index("mettre_a_jour") < principal.index("appliquer_reglages")
+    assert principal.index("pause") < principal.index("appliquer_reglages")
+    assert 'bash "$dossier/reglages.sh" "$dossier"' in maj
+
+
+def test_les_reglages_ne_relancent_jamais_le_bot():
+    texte = _reglages()
+    for interdit in ("restart hockey-bot", "restart \"$SERVICE\"", "stop hockey-bot", "--now hockey-bot"):
+        assert interdit not in texte
+
+
+@pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None, reason="scripts pour Linux seulement")
+def test_reglages_ecrit_seulement_ce_qui_change(tmp_path):
+    import os
+    import stat
+
+    def lancer(source=HEBERGEMENT):
+        return subprocess.run(["bash", str(HEBERGEMENT / "reglages.sh"), str(source)], check=True, text=True,
+                              capture_output=True, env={**os.environ, "RACINE": str(tmp_path)}).stdout
+
+    premiere = lancer()
+    assert "mis à jour" in premiere
+    for chemin, executable in (("usr/local/sbin/hockey-bot-maj", True), ("usr/local/bin/bot", True),
+                               ("usr/local/sbin/hockey-bot-nuit", True), ("usr/local/sbin/hockey-bot-reglages", True),
+                               ("etc/systemd/system/hockey-bot.service", False),
+                               ("etc/needrestart/conf.d/hockey-bot.conf", False),
+                               ("etc/systemd/system/apt-daily-upgrade.timer.d/hockey-bot.conf", False),
+                               ("etc/apt/apt.conf.d/52hockey-bot", False)):
+        fichier = tmp_path / chemin
+        assert fichier.is_file(), chemin
+        assert bool(fichier.stat().st_mode & stat.S_IXUSR) == executable, chemin
+    assert (tmp_path / "usr/local/sbin/hockey-bot-maj").read_bytes() == (HEBERGEMENT / "maj.sh").read_bytes()
+    assert "rien à changer" in lancer()  # deuxième fois : aucun fichier réécrit
+
+    # Une nouvelle version change un outil : seul celui-là est réécrit.
+    nouvelle = tmp_path / "nouvelle"
+    shutil.copytree(HEBERGEMENT, nouvelle)
+    (nouvelle / "bot.sh").write_text((HEBERGEMENT / "bot.sh").read_text(encoding="utf-8") + "\n# v2\n",
+                                     encoding="utf-8")
+    sortie = lancer(nouvelle)
+    assert "/usr/local/bin/bot" in sortie and "hockey-bot-maj" not in sortie
+    assert (tmp_path / "usr/local/bin/bot").read_text(encoding="utf-8").endswith("# v2\n")
+    assert not [f for f in tmp_path.rglob("*.??????") if f.is_file()]  # aucun fichier temporaire oublié
 
 
 @pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None, reason="scripts pour Linux seulement")
