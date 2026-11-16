@@ -444,6 +444,58 @@ def parse_farm(html: str, code: str) -> tuple[str, str] | None:
     return None
 
 
+# La page « Effectifs » : la ligne de chaque joueur (contrat et cotes), pour les annonces de transactions.
+
+# Les colonnes d'information ; toutes les autres colonnes nommées sont des cotes (POT, FI, … OA).
+ROSTER_INFO = {"name", "main_pos", "alt_pos", "catch", "age", "salary", "contract_length"}
+
+
+def parse_roster(html: str) -> dict[str, transactions.PlayerLine]:
+    """Les joueurs de la page « Effectifs » d'une équipe (LNH, club-école et juniors), par nom normalisé.
+
+    Les colonnes sont trouvées par leur attribut `data-column`, et le titre affiché de chaque cote
+    est gardé tel quel (un gardien a GL, BL, PA… au lieu de SH, PL, CH…). Une page sans ces colonnes
+    ne donne aucun joueur : l'annonce part alors sans les lignes.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    if is_login_page(soup):
+        raise LoginNeeded("SHM demande de se connecter.")
+    found: dict[str, transactions.PlayerLine] = {}
+    for table in soup.find_all("table"):
+        head = table.find("thead")
+        if head is None:
+            continue
+        columns = [(th.get("data-column"), " ".join(th.get_text(" ").split())) for th in head.find_all("th")]
+        if not any(column == "name" for column, _ in columns):
+            continue
+        body = table.find("tbody") or table
+        for row in body.find_all("tr", recursive=False):
+            info: dict[str, str] = {}
+            ratings = []
+            for (column, label), cell in zip(columns, row.find_all("td", recursive=False)):
+                if not column:
+                    continue
+                value = " ".join(cell.get_text(" ").split())
+                if column == "name":
+                    # « Connor McMicheal * » : l'étoile n'est pas dans le nom.
+                    value = value.rstrip("* ").strip()
+                if column in ROSTER_INFO:
+                    info[column] = value
+                elif value:
+                    ratings.append((label or column, value))
+            name = info.get("name")
+            if not name:
+                continue
+            position = info.get("main_pos", "")
+            alt = info.get("alt_pos", "")
+            if alt and alt != "-":
+                position = f"{position}/{alt}" if position else alt
+            found.setdefault(normalize(name), transactions.PlayerLine(
+                name, position, info.get("age", ""), info.get("salary", ""), info.get("contract_length", ""),
+                tuple(ratings)))
+    return found
+
+
 # La page « Classements »
 
 @dataclass(frozen=True)
@@ -620,6 +672,10 @@ class ShmClient:
     async def farm(self, slug: str, code: str) -> tuple[str, str] | None:
         """Le club-école (code, nom) d'une équipe de la ligue."""
         return await self.read(roster_url(slug, code), lambda html: parse_farm(html, code))
+
+    async def roster(self, slug: str, code: str) -> dict[str, transactions.PlayerLine]:
+        """La ligne de chaque joueur d'une équipe, d'après sa page « Effectifs »."""
+        return await self.read(roster_url(slug, code), parse_roster)
 
     async def read(self, url: str, parse):
         """Une page de ligue lue avec `parse`. Se connecte au besoin."""

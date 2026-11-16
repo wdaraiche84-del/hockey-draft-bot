@@ -51,6 +51,8 @@ PICK_BUTTON_ID = "draft:faire-mon-choix"
 SHM_CHECK_MINUTES = 5
 # Après une longue panne, le bot lit au plus 3 pages SHM (45 transactions) pour rattraper son retard.
 SHM_MAX_PAGES = 3
+# Pour la ligne des joueurs échangés, le bot lit au plus 6 pages « Effectifs » par lecture.
+SHM_MAX_ROSTERS = 6
 # Les admins sont prévenus dans le salon quand SHM ne répond plus depuis une heure.
 SHM_WARN_SECONDS = 3600
 # Le lien d'invitation créé pour le propriétaire du bot dure 7 jours.
@@ -546,13 +548,14 @@ class DraftBot(discord.Client):
             except shm.ShmError as error:
                 log.warning("Classement SHM illisible pour la ligue %s : %s", slug, error)
                 errors.append(str(error))
+        players = await self.trade_players(slug, trades, followers) if trades is not None else {}
         for guild_id, channel_id in followers:
             try:
                 channels, locked = self.shm_channels(guild_id)
                 # Une sorte d'annonce arrêtée est quand même retenue, sans rien publier : la rallumer
                 # plus tard n'annonce que la suite.
                 if trades is not None:
-                    await self.publish_shm(guild_id, channels["trades"], trades, teams)
+                    await self.publish_shm(guild_id, channels["trades"], trades, teams, players)
                 if waivers is not None:
                     await self.publish_waivers(guild_id, channels["waivers"], waivers, claims, complete)
                 if buyouts is not None:
@@ -581,6 +584,40 @@ class DraftBot(discord.Client):
                 channel = None
             found[kind] = channel
         return found, locked
+
+    async def trade_players(self, slug: str, trades: list, followers: list[tuple[int, int | None]]
+                            ) -> dict[str, transactions.PlayerLine]:
+        """La ligne SHM (contrat et cotes) des joueurs des transactions qui vont être annoncées.
+
+        Le bot lit la page « Effectifs » des équipes de ces transactions seulement. Si SHM ne répond
+        pas, les transactions sont annoncées quand même, sans les lignes : rien n'est jamais bloqué.
+        """
+        def to_announce(sides) -> bool:
+            key = shm.shm_key(sides)
+            return any(self.store.shm_primed(g) and self.store.shm_channels(g)["trades"]
+                       and not self.store.is_announced(g, key) for g, _ in followers)
+
+        codes: list[str] = []
+        for sides in trades:
+            if not to_announce(sides):
+                continue
+            for side in sides:
+                if side.code and side.code not in codes and any(item.round is None for item in side.items):
+                    codes.append(side.code)
+        players: dict[str, transactions.PlayerLine] = {}
+        for code in codes[:SHM_MAX_ROSTERS]:
+            try:
+                found = await self.shm.roster(slug, code)
+            except shm.ShmError as error:
+                log.warning("Page « Effectifs » %s illisible dans la ligue %s : %s", code, slug, error)
+                break
+            except Exception:
+                # Les lignes sont un plus : une erreur imprévue n'empêche jamais l'annonce.
+                log.exception("Lignes des joueurs impossibles à lire (équipe %s, ligue %s)", code, slug)
+                break
+            for name, line in found.items():
+                players.setdefault(name, line)
+        return players
 
     async def find_farms(self, slug: str, buyouts: list[shm.Buyout], teams: dict[str, str],
                          guild_ids: list[int]) -> list[shm.Buyout]:
@@ -653,7 +690,7 @@ class DraftBot(discord.Client):
         return trades, teams
 
     async def publish_shm(self, guild_id: int, channel: discord.TextChannel | None, trades: list,
-                          teams: dict[str, str]) -> int:
+                          teams: dict[str, str], players: dict[str, transactions.PlayerLine] | None = None) -> int:
         """Annonce les transactions pas encore annoncées sur ce serveur. Rend le nombre annoncé.
 
         La première lecture d'une ligue retient les transactions déjà sur SHM sans les annoncer :
@@ -680,7 +717,7 @@ class DraftBot(discord.Client):
             # SHM met la plus récente en haut : on annonce de la plus ancienne à la plus récente.
             for key, trade in reversed(fresh):
                 if primed and channel is not None:
-                    await channel.send(transactions.announcement(trade, roles_by_id, guild_emojis(guild)),
+                    await channel.send(transactions.announcement(trade, roles_by_id, guild_emojis(guild), players),
                                        allowed_mentions=PINGS)
                     posted += 1
                     self.store.add_log(guild_id, None, "transaction SHM",

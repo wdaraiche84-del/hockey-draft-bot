@@ -1396,6 +1396,7 @@ SHM_WAIVERS = (Path(__file__).parent / "fixtures" / "shm_ballottage.html").read_
 SHM_HOME = (Path(__file__).parent / "fixtures" / "shm_accueil.html").read_text(encoding="utf-8")
 SHM_ROSTER = (Path(__file__).parent / "fixtures" / "shm_effectifs.html").read_text(encoding="utf-8")
 SHM_STANDINGS = (Path(__file__).parent / "fixtures" / "shm_classement.html").read_text(encoding="utf-8")
+SHM_ROSTER_STATS = (Path(__file__).parent / "fixtures" / "shm_effectifs_stats.html").read_text(encoding="utf-8")
 SHM_ROLES = ["Red Wings", "Rangers", "Hurricanes", "Blackhawks", "Islanders", "Sénateurs", "Sabres", "Stars",
              "Kings", "Predators", "Flyers", "Blues", "Golden Knights", "Oilers", "Canadiens", "Sharks", "Admins"]
 
@@ -1411,6 +1412,10 @@ class FakeShmClient:
         self.error = self.waivers_error = self.home_error = None
         self.requests = []
         self.other_requests = []
+        # Les pages « Effectifs » avec la ligne de chaque joueur, par code d'équipe SHM.
+        self.rosters = {}
+        self.roster_requests = []
+        self.roster_error = None
 
     async def history(self, slug, page=1):
         self.requests.append((slug, page))
@@ -1447,6 +1452,12 @@ class FakeShmClient:
         self.other_requests.append((slug, f"effectifs {code}"))
         # Dans ce faux SHM, seul Montréal a un club-école connu : Laval (LAV).
         return ("LAV", "Laval Rocket") if code == "MTL" else None
+
+    async def roster(self, slug, code):
+        self.roster_requests.append((slug, code))
+        if self.roster_error:
+            raise self.roster_error
+        return dict(self.rosters.get(code, {}))
 
     def add_home(self, team, action, text):
         """Une nouvelle ligne en haut des « Changements par équipe » ; la plus vieille disparaît."""
@@ -1527,6 +1538,70 @@ def test_shm_setup_keeps_old_trades_quiet_then_announces_new_ones(shm_league):
         f"➡️ {roles['Golden Knights'].mention} reçoit : **Jack Eichel**",
     ]
     assert [a for _, _, a, _ in store.log_entries(guild.id)].count("transaction SHM") == 2
+
+
+FIALA = ("Kevin Fiala · AG/AD · 24 ans · 4 250 000 $ · 1 an\n"
+         "POT FI SH PL ST CH PO HI SK EN PE FA LE SR OFF DEF OA\n"
+         " 88 32 89 90 83 83 83 81 87 90 80 70 60 80  87  82 82")
+SAMSONOV = ("Ilya Samsonov · G · 24 ans · 2 000 000 $ · 1 an\n"
+            "POT FI GL BL ST PA AN AG SK EN PE FA LE SR OFF DEF OA\n"
+            " 78 40 79 79 79 78 79 78 79 78 78 79 60 78  79  78 77")
+
+
+def test_traded_players_are_announced_with_their_shm_line(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    site.rosters["MTL"] = shm.parse_roster(SHM_ROSTER_STATS)
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        quiet_reads = list(site.roster_requests)
+        site.add_trade(new_trade("MTL", ["Kevin Fiala"], "EDM", ["Ilya Samsonov", "Choix de 1re ronde 2027"]))
+        await bot.check_shm()
+        reads = list(site.roster_requests)
+        await bot.check_shm()
+        return quiet_reads, reads
+    quiet_reads, reads = run(scenario())
+    # Rien à annoncer : aucune page « Effectifs » lue. Une transaction : les pages de ses deux équipes.
+    assert quiet_reads == []
+    assert reads == [("lnhs_2", "MTL"), ("lnhs_2", "EDM")] and site.roster_requests == reads
+    assert channel.texts() == [
+        f"🔁 **Transaction**\n➡️ {roles['Canadiens'].mention} reçoit : **Kevin Fiala**\n"
+        f"➡️ {roles['Oilers'].mention} reçoit : **Ilya Samsonov**, **Choix de 1re ronde 2027**\n"
+        f"```\n{FIALA}\n\n{SAMSONOV}\n```"]
+
+
+def test_trade_is_announced_without_lines_when_shm_rosters_fail(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    site.rosters["MTL"] = shm.parse_roster(SHM_ROSTER_STATS)
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.roster_error = shm.ShmError("SHM ne répond pas.")
+        site.add_trade(new_trade("MTL", ["Kevin Fiala"], "EDM", ["Evan Bouchard"]))
+        await bot.check_shm()
+        site.roster_error = RuntimeError("bogue imprévu")
+        site.add_trade(new_trade("STL", ["Jordan Kyrou"], "VGK", ["Jack Eichel"]))
+        await bot.check_shm()
+    run(scenario())
+    assert channel.texts() == [
+        f"🔁 **Transaction**\n➡️ {roles['Canadiens'].mention} reçoit : **Kevin Fiala**\n"
+        f"➡️ {roles['Oilers'].mention} reçoit : **Evan Bouchard**",
+        f"🔁 **Transaction**\n➡️ {roles['Blues'].mention} reçoit : **Jordan Kyrou**\n"
+        f"➡️ {roles['Golden Knights'].mention} reçoit : **Jack Eichel**",
+    ]
+
+
+def test_player_not_found_on_shm_is_announced_without_a_line(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    site.rosters["MTL"] = shm.parse_roster(SHM_ROSTER_STATS)
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.add_trade(new_trade("MTL", ["Kevin Fiala", "Joueur Inconnu"], "EDM", ["Evan Bouchard"]))
+        await bot.check_shm()
+    run(scenario())
+    assert channel.texts()[0].endswith(f"**Evan Bouchard**\n```\n{FIALA}\n```")
 
 
 def test_shm_status_is_shown_in_the_league_menu(shm_league):

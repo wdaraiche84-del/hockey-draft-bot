@@ -374,3 +374,35 @@ def test_unreachable_shm_is_a_clear_error(monkeypatch):
         finally:
             await client.close()
     asyncio.run(scenario())
+
+
+# La page « Effectifs » : la ligne de chaque joueur pour les annonces de transactions
+
+ROSTER_STATS = (Path(__file__).parent / "fixtures" / "shm_effectifs_stats.html").read_text(encoding="utf-8")
+
+
+def test_roster_page_gives_each_player_line():
+    players = shm.parse_roster(ROSTER_STATS)
+    # L'équipe LNH, le club-école et les juniors, patineurs et gardiens (3 par groupe dans la page réduite).
+    assert len(players) == 17
+    fiala = players["kevin fiala"]
+    assert (fiala.name, fiala.position, fiala.age, fiala.salary, fiala.years) == ("Kevin Fiala", "AG/AD", "24",
+                                                                                   "4 250 000", "1")
+    assert [label for label, _ in fiala.ratings] == ["POT", "FI", "SH", "PL", "ST", "CH", "PO", "HI", "SK", "EN",
+                                                     "PE", "FA", "LE", "SR", "OFF", "DEF", "OA"]
+    assert dict(fiala.ratings)["OA"] == "82" and dict(fiala.ratings)["POT"] == "88"
+    # Un gardien garde les titres de ses colonnes, et sa latéralité n'est pas une position.
+    samsonov = players["ilya samsonov"]
+    assert samsonov.position == "G" and [label for label, _ in samsonov.ratings][2:4] == ["GL", "BL"]
+    # L'étoile de SHM n'est pas dans le nom.
+    assert players["connor mcmicheal"].name == "Connor McMicheal"
+
+
+def test_roster_page_without_ratings_gives_no_lines():
+    assert shm.parse_roster((Path(__file__).parent / "fixtures" / "shm_effectifs.html").read_text()) == {}
+
+
+def test_roster_page_asking_to_log_in_is_detected():
+    login = (Path(__file__).parent / "fixtures" / "shm_connexion.html").read_text(encoding="utf-8")
+    with pytest.raises(shm.LoginNeeded):
+        shm.parse_roster(login)

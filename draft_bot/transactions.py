@@ -82,6 +82,18 @@ class Side:
     name: str | None = None
 
 
+@dataclass(frozen=True)
+class PlayerLine:
+    """La ligne d'un joueur sur la page « Effectifs » de SHM : son contrat et ses cotes."""
+    name: str
+    position: str
+    age: str
+    salary: str
+    years: str
+    # (titre de la colonne, valeur), dans l'ordre de SHM : POT, FI, SH, … OFF, DEF, OA.
+    ratings: tuple[tuple[str, str], ...]
+
+
 @dataclass
 class Trade:
     sides: list[Side]
@@ -216,13 +228,50 @@ def side_label(side: Side, roles_by_id: dict, mention: bool) -> str:
     return "**❓ équipe inconnue**"
 
 
-def announcement(trade: Trade, roles_by_id: dict, emojis: dict[str, str] | None = None) -> str:
+# Une annonce Discord fait au plus 2000 caractères.
+MAX_MESSAGE = 2000
+
+
+def player_block(line: PlayerLine) -> str:
+    """Trois lignes pour un joueur, alignées comme le tableau de SHM :
+
+        Kevin Fiala · AG/AD · 24 ans · 4 250 000 $ · 1 an
+        POT FI SH PL ST CH PO HI SK EN PE FA LE SR OFF DEF OA
+         88 32 89 90 83 83 83 81 87 90 80 70 60 80  87  82 82
+    """
+    infos = [line.name.replace("`", "'")]
+    infos += [part for part in (line.position, f"{line.age} ans" if line.age else "",
+                                f"{line.salary} $" if line.salary else "",
+                                f"{line.years} an{'s' if line.years not in ('0', '1') else ''}" if line.years else "")
+              if part]
+    widths = [max(len(label), len(value)) for label, value in line.ratings]
+    titles = " ".join(label.rjust(w) for (label, _), w in zip(line.ratings, widths))
+    values = " ".join(value.rjust(w) for (_, value), w in zip(line.ratings, widths))
+    return "\n".join([" · ".join(infos), titles, values]) if line.ratings else " · ".join(infos)
+
+
+def announcement(trade: Trade, roles_by_id: dict, emojis: dict[str, str] | None = None,
+                 players: dict[str, PlayerLine] | None = None) -> str:
+    """L'annonce d'une transaction. Avec `players` (nom normalisé -> ligne SHM), la ligne de chaque
+    joueur échangé est ajoutée en dessous, tant que le message reste assez court pour Discord."""
     lines = ["🔁 **Transaction**"]
     for side, texts in zip(trade.sides, trade.texts):
         team = side.logo.team if side.logo is not None else None
         lines.append(f"➡️ {emoji_prefix(team, emojis or {})}{side_label(side, roles_by_id, mention=True)} reçoit : "
                      + ", ".join(f"**{escape_markdown(t)}**" for t in texts))
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    blocks = []
+    for side in trade.sides:
+        for item in side.items:
+            line = (players or {}).get(normalize(item.text)) if item.round is None else None
+            if line is not None:
+                block = player_block(line)
+                if len(text) + len("\n```\n") + len("\n\n".join([*blocks, block])) + len("\n```") > MAX_MESSAGE:
+                    break
+                blocks.append(block)
+    if blocks:
+        text += "\n```\n" + "\n\n".join(blocks) + "\n```"
+    return text
 
 
 def summary(trade: Trade, roles_by_id: dict, limit: int = 200) -> str:

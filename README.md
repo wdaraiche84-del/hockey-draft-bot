@@ -75,6 +75,16 @@ Ensuite, le bot regarde la page **Historique des transactions** de la ligue tout
 ➡️ @Oilers reçoit : Choix de 2e ronde 2020 (Blues)
 ```
 
+Sous l'annonce, le bot ajoute la ligne de chaque joueur échangé, comme sur la page **Effectifs** de SHM (position, âge, salaire, années de contrat et toutes les cotes) :
+
+```
+Kevin Fiala · AG/AD · 24 ans · 4 250 000 $ · 1 an
+POT FI SH PL ST CH PO HI SK EN PE FA LE SR OFF DEF OA
+ 88 32 89 90 83 83 83 81 87 90 80 70 60 80  87  82 82
+```
+
+Le bot lit pour ça la page **Effectifs** des deux équipes, seulement quand il y a une transaction à annoncer. Si SHM ne répond pas, ou si un joueur n'est pas trouvé, la transaction est annoncée quand même, sans sa ligne. Les choix de repêchage n'ont pas de ligne.
+
 Le rôle d'une équipe est trouvé par son nom, son surnom, sa ville ou son code (« Bruins », « Les Bruins de Boston », « Boston », « BOS »). Une transaction déjà annoncée n'est pas répétée (même celles annoncées autrefois avec une capture d'écran), et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
 
 Le bot suit aussi le **ballottage** de la ligue, dans le même salon :

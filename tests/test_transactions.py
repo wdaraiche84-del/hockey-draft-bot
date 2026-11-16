@@ -128,3 +128,37 @@ def test_database_from_the_capture_days_still_opens(tmp_path):
     store = Store(str(path))
     assert store.get_channels(1) == (2, 3)
     assert store.shm_channels(1)["trades"] == 4
+
+
+# La ligne SHM des joueurs échangés
+
+def fiala():
+    labels = ["POT", "FI", "SH", "PL", "ST", "CH", "PO", "HI", "SK", "EN", "PE", "FA", "LE", "SR", "OFF", "DEF", "OA"]
+    values = ["88", "32", "89", "90", "83", "83", "83", "81", "87", "90", "80", "70", "60", "80", "87", "82", "82"]
+    return transactions.PlayerLine("Kevin Fiala", "AG/AD", "24", "4 250 000", "1", tuple(zip(labels, values)))
+
+
+def test_player_block_is_aligned_like_shm():
+    assert transactions.player_block(fiala()) == (
+        "Kevin Fiala · AG/AD · 24 ans · 4 250 000 $ · 1 an\n"
+        "POT FI SH PL ST CH PO HI SK EN PE FA LE SR OFF DEF OA\n"
+        " 88 32 89 90 83 83 83 81 87 90 80 70 60 80  87  82 82")
+    junior = transactions.PlayerLine("Jeune `Joueur`", "C", "18", "100 000", "0", (("OA", "58"),))
+    assert transactions.player_block(junior) == "Jeune 'Joueur' · C · 18 ans · 100 000 $ · 0 an\nOA\n58"
+    veteran = transactions.PlayerLine("Vétéran", "D", "33", "1 000 000", "3", ())
+    assert transactions.player_block(veteran) == "Vétéran · D · 33 ans · 1 000 000 $ · 3 ans"
+
+
+def test_picks_get_no_line_and_announcement_fits_in_discord():
+    many = [f"Joueur {i}" for i in range(30)]
+    trade = Trade([Side(Logo("CGY"), [Item(name) for name in many]),
+                   Side(Logo("EDM"), [Item("Kevin Fiala", 2, "2020")])])
+    transactions.resolve(trade, [])
+    players = {f"joueur {i}": transactions.PlayerLine(f"Joueur {i}", "C", "25", "1 000 000", "2", fiala().ratings)
+               for i in range(30)}
+    players["kevin fiala"] = fiala()
+    text = transactions.announcement(trade, {}, players=players)
+    assert len(text) <= transactions.MAX_MESSAGE and text.endswith("\n```")
+    assert "Joueur 0 · C" in text and "Kevin Fiala ·" not in text
+    # Sans lignes connues : l'annonce de toujours.
+    assert "```" not in transactions.announcement(trade, {}, players={})
