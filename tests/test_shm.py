@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 
-from draft_bot import capture, shm
+from draft_bot import shm, transactions
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HISTORY = (FIXTURES / "shm_historique.html").read_text(encoding="utf-8")
@@ -59,16 +59,16 @@ def test_trade_becomes_an_announcement_with_team_roles():
             self.id, self.name, self.mention = i, name, f"<@&{i}>"
     roles = [Role(1, "Red Wings"), Role(2, "Rangers"), Role(3, "Hurricanes")]
     trade = shm.to_trade(page.trades[0], page.teams)
-    capture.resolve(trade, roles, [])
+    transactions.resolve(trade, roles)
     by_id = {r.id: r for r in roles}
-    assert capture.announcement(trade, by_id) == (
+    assert transactions.announcement(trade, by_id) == (
         "🔁 **Transaction**\n"
         "➡️ <@&1> reçoit : **Adam Fox**, **Choix de 2e ronde 2026 (Hurricanes)**\n"
         "➡️ <@&2> reçoit : **Simon Edvinsson**, **Carter Bear**")
     # Une équipe sans rôle garde son nom SHM, sans mention.
     other = shm.to_trade(page.trades[1], page.teams)
-    capture.resolve(other, roles, [])
-    assert capture.announcement(other, by_id).splitlines()[1] == "➡️ **San Jose Sharks** reçoit : **Otto Stenberg**"
+    transactions.resolve(other, roles)
+    assert transactions.announcement(other, by_id).splitlines()[1] == "➡️ **San Jose Sharks** reçoit : **Otto Stenberg**"
 
 
 def test_key_ignores_order_and_changes_with_the_content():

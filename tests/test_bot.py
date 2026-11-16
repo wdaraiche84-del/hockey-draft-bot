@@ -272,7 +272,7 @@ async def open_panel(bot, guild, admin, draft=True):
     """Tape /admin. Le panneau s'ouvre sur le menu de la ligue ; avec draft=True, clique aussi sur « Draft »."""
     i = await command(bot, "admin", FakeInteraction(guild, admin))
     assert isinstance(i.view, AdminPanel)
-    assert keys(i.view) == ["draft", "transaction", "shm"] and "Panneau de la ligue" in i.last
+    assert keys(i.view) == ["draft", "shm"] and "Panneau de la ligue" in i.last
     if draft:
         await click(i.view, button(i.view, "draft"), i)
     return i
@@ -630,7 +630,7 @@ def test_admin_opens_on_the_league_menu_not_only_the_draft(league):
     bot, store, guild, _, _, _ = league
     admin = admin_of(guild)
     description = next(c for c in bot.tree.get_commands() if c.name == "admin").description
-    assert "ligue" in description and "transactions" in description and "SHM" in description
+    assert "ligue" in description and "SHM" in description
 
     async def scenario():
         panel_i = await open_panel(bot, guild, admin, draft=False)
@@ -642,14 +642,14 @@ def test_admin_opens_on_the_league_menu_not_only_the_draft(league):
         await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
         assert keys(panel) == ["choisir", "annuler", "options", "menu"]  # « Retour » revient au draft
         back = await click(panel, button(panel, "menu"), FakeInteraction(guild, admin))
-        trade = await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
-        return menu, draft.last, back.last, trade
-    menu, draft, back, trade = run(scenario())
+        return menu, draft.last, back.last, keys(panel)
+    menu, draft, back, menu_keys = run(scenario())
     assert "Panneau de la ligue" in menu and "Draft** : en cours (0 choix faits sur 4)" in menu
-    assert "Transactions" in menu and "rachats, ballottages" in menu and "État : pas activées" in menu
+    assert "rachats, ballottages" in menu and "État : pas activées" in menu
     assert "draft est en cours" in draft and back == menu
-    # Le bouton du menu ouvre bien la fenêtre de capture (ou explique que la lecture n'est pas installée).
-    assert isinstance(trade.response.modal, CaptureModal) or trade.last == bot_module.NOT_INSTALLED
+    # Plus de bouton « Annoncer une transaction » : les annonces SHM automatiques s'en occupent.
+    assert menu_keys == ["draft", "shm"]
+    assert "capture" not in menu and "Annoncer une transaction" not in menu
 
 
 def test_menu_shows_where_the_draft_is_at(empty_league):
@@ -681,7 +681,7 @@ def test_admin_on_the_menu_stays_there_after_a_change(league):
         await bot.refresh_panels(guild, actor_id=admin.id)
         return on_menu_i
     on_menu_i = run(scenario())
-    assert keys(on_menu_i.view) == ["draft", "transaction", "shm"]
+    assert keys(on_menu_i.view) == ["draft", "shm"]
     assert "en cours (1 choix faits sur 4)" in on_menu_i.edits[-1]
 
 
@@ -689,8 +689,9 @@ def test_help_explains_the_league_panel_to_admins(league):
     bot, store, guild, _, _, _ = league
     admin = run(command(bot, "aide", FakeInteraction(guild, admin_of(guild)))).last
     assert "panneau de la ligue" in admin
-    for name in ("**Draft**", "**Annoncer une transaction**", "**Annonces SHM auto**"):
+    for name in ("**Draft**", "**Annonces SHM auto**"):
         assert name in admin
+    assert "Annoncer une transaction" not in admin and "capture" not in admin
 
 
 def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
@@ -1156,11 +1157,11 @@ def all_panel_screens():
 def test_every_panel_screen_shows_few_buttons():
     phases = [[item.key for item in panel.children] for panel in all_panel_screens()]
     assert phases == [
-        ["draft", "transaction", "shm"],
+        ["draft", "shm"],
         ["salons", "options", "menu"], ["joueurs", "options", "menu"], ["ordre", "options", "menu"], ["lancer", "options", "menu"],
         ["choisir", "annuler", "options", "menu"], ["annuler", "options", "menu"],
         ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"],
-        ["draft", "transaction", "shm"],
+        ["draft", "shm"],
     ]
 
 
@@ -1383,272 +1384,11 @@ def test_discord_finds_the_new_buttons_after_each_screen_change(league):
     assert more == current and (2, "admin:choisir") not in more and (2, "admin:retour") in more
 
 
-# Annoncer une transaction à partir d'une capture SHM
-
-import json
-from pathlib import Path
-
-from draft_bot import capture
-from draft_bot.bot import CaptureModal, TradeFixModal, TradePreview
-
-RECORDED = json.loads((Path(__file__).parent / "captures" / "transactions-shm.json").read_text())
-NHL_ROLES = ["Flames", "Oilers", "Sharks", "Stars", "Sénateurs", "Maple Leafs", "Panthers", "Lightning", "Flyers",
-             "Kings", "Hurricanes", "Bruins", "Penguins", "Blues", "Red Wings", "Admins"]
-
-
-class FakeImage(FakeAttachment):
-    def __init__(self, filename="capture.png", content_type="image/png", size=None):
-        super().__init__("image", size)
-        self.filename, self.content_type = filename, content_type
-
-
-@pytest.fixture
-def nhl(monkeypatch):
-    """Un serveur de ligue avec un rôle par équipe et un salon des transactions."""
-    monkeypatch.setattr(bot_module, "capture_installed", lambda: True)
-    readings = []
-
-    async def fake_read(bot, data):
-        readings.append(data)
-        return json.loads(json.dumps(RECORDED))
-    monkeypatch.setattr(bot_module, "read_capture", fake_read)
-    store = Store(":memory:")
-    bot = DraftBot(store, backup_dir=None)
-    roles = [FakeRole(name) for name in NHL_ROLES]
-    trades = FakeChannel("transactions")
-    guild = FakeGuild(roles, [trades])
-    store.approve_guild(guild.id, None)
-    return bot, store, guild, admin_of(guild), trades, {r.name: r for r in roles}
-
-
-async def send_capture(bot, guild, admin, channel, image=None):
-    """L'admin clique sur « Annoncer une transaction » dans /admin, puis envoie sa capture."""
-    panel = (await open_panel(bot, guild, admin, draft=False)).view
-    opened = await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
-    modal = opened.response.modal
-    assert isinstance(modal, CaptureModal), opened.sent
-    i = FakeInteraction(guild, admin)
-    await fill(modal, file=[image or FakeImage()], channel=[channel]).on_submit(i)
-    return i
-
-
-def preview_button(view, label):
-    return next(item for item in view.children if isinstance(item, discord.ui.Button) and label in item.label)
-
-
-def preview_menu(view, row):
-    return next(item for item in view.children if isinstance(item, discord.ui.Select) and item.row == row)
-
-
-async def press(view, label, interaction):
-    if await view.interaction_check(interaction):
-        await preview_button(view, label).callback(interaction)
-    return interaction
-
-
-def test_capture_preview_then_announce_every_trade_with_team_roles(nhl):
-    bot, store, guild, admin, channel, roles = nhl
-
-    async def scenario():
-        i = await send_capture(bot, guild, admin, channel)
-        preview = i.view
-        text = i.last
-        await press(preview, "Annoncer", FakeInteraction(guild, admin))
-        return text, preview
-    text, preview = run(scenario())
-    assert isinstance(preview, TradePreview)
-    assert "8 transactions lues" in text and text.count("✅") == 8 and "⚠️" not in text
-    assert "**Flames** reçoit Daniil Tarasov · **Oilers** reçoit Choix de 2e ronde 2020 (Blues)" in text
-    posted = channel.texts()
-    assert len(posted) == 8
-    # SHM montre la plus récente en haut : la plus ancienne est annoncée en premier.
-    assert posted[0] == ("🔁 **Transaction**\n"
-                         f"➡️ {roles['Panthers'].mention} reçoit : **Yakov Trenin**, **Jeremy Lauzon**, "
-                         "**Choix de 1re ronde 2018 (Blues)**, **Choix de 1re ronde 2019 (Kings)**\n"
-                         f"➡️ {roles['Penguins'].mention} reçoit : **Charlie McAvoy**")
-    assert posted[-1].startswith(f"🔁 **Transaction**\n➡️ {roles['Flames'].mention} reçoit : **Daniil Tarasov**")
-    assert store.trades_channel(guild.id) == channel.id
-    assert [a for _, _, a, _ in store.log_entries(guild.id)].count("transaction") == 8
-
-
-def test_same_capture_twice_does_not_announce_twice(nhl):
-    bot, store, guild, admin, channel, _ = nhl
-
-    async def scenario():
-        first = await send_capture(bot, guild, admin, channel)
-        await press(first.view, "Annoncer", FakeInteraction(guild, admin))
-        return await send_capture(bot, guild, admin, channel)
-    again = run(scenario())
-    assert again.last.count("(déjà annoncée)") == 8 and "✅" not in again.last
-    assert preview_button(again.view, "Annoncer").disabled
-    assert len(channel.texts()) == 8
-
-
-def test_admin_chooses_which_trades_to_announce(nhl):
-    bot, store, guild, admin, channel, roles = nhl
-
-    async def scenario():
-        i = await send_capture(bot, guild, admin, channel)
-        menu = preview_menu(i.view, 0)
-        assert len(menu.options) == 8 and all(o.default for o in menu.options)
-        menu._values = ["0", "2"]
-        changed = FakeInteraction(guild, admin)
-        await i.view.select_changed(changed)
-        assert changed.last.count("✅") == 2 and changed.last.count("⬜") == 6
-        assert preview_button(changed.view, "Annoncer").label == "Annoncer les 2"
-        await press(changed.view, "Annoncer", FakeInteraction(guild, admin))
-    run(scenario())
-    posted = channel.texts()
-    assert len(posted) == 2
-    assert roles["Sénateurs"].mention in posted[0] and roles["Flames"].mention in posted[1]
-
-
-def test_team_without_role_must_be_corrected_and_the_logo_is_remembered(nhl):
-    bot, store, guild, admin, channel, roles = nhl
-    # Un rôle dont le nom ne dit pas de quelle équipe il s'agit.
-    pittsburgh = roles["Penguins"]
-    pittsburgh.name = "Équipe 13"
-
-    async def scenario():
-        i = await send_capture(bot, guild, admin, channel)
-        assert "**Pittsburgh Penguins** reçoit Charlie McAvoy" in i.last and "équipe sans rôle" in i.last
-        blocked = await press(i.view, "Annoncer", FakeInteraction(guild, admin))
-        assert "À corriger d'abord : transaction 8" in blocked.last and channel.texts() == []
-        fix = preview_menu(i.view, 1)
-        fix._values = ["7"]
-        opened = FakeInteraction(guild, admin)
-        await i.view.fix_chosen(opened)
-        modal = opened.response.modal
-        assert isinstance(modal, TradeFixModal) and modal.title == "Corriger la transaction 8"
-        assert modal.items[1].default == "Charlie McAvoy"
-        modal.roles[1]._values = [pittsburgh]
-        modal.items[1]._value = "Charlie McAvoy\nChoix de 3e ronde 2022"
-        fixed = FakeInteraction(guild, admin)
-        await modal.on_submit(fixed)
-        assert "⚠️" not in fixed.last and "Choix de 3e ronde 2022" in fixed.last
-        await press(fixed.view, "Annoncer", FakeInteraction(guild, admin))
-        # La prochaine capture reconnaît ce logo toute seule.
-        return await send_capture(bot, guild, admin, channel)
-    again = run(scenario())
-    assert len(channel.texts()) == 8
-    assert f"{pittsburgh.mention} reçoit : **Charlie McAvoy**, **Choix de 3e ronde 2022**" in channel.texts()[0]
-    assert len(store.learned_logos(guild.id)) == 1
-    assert "**Équipe 13** reçoit Charlie McAvoy" in again.last
-
-
-def test_capture_problems_are_explained(nhl, monkeypatch):
-    bot, store, guild, admin, channel, _ = nhl
-    locked = FakeChannel("verrouillé", bot_allowed=False)
-    guild.channels[locked.id] = locked
-
-    async def failing_read(bot, data):
-        raise capture.CaptureError("Je n'arrive pas à lire cette image.")
-
-    async def scenario():
-        text = await send_capture(bot, guild, admin, channel, FakeImage("liste.csv", "text/csv"))
-        huge = await send_capture(bot, guild, admin, channel, FakeImage(size=50_000_000))
-        no_access = await send_capture(bot, guild, admin, locked)
-        monkeypatch.setattr(bot_module, "read_capture", failing_read)
-        unreadable = await send_capture(bot, guild, admin, channel)
-        return text, huge, no_access, unreadable
-    text, huge, no_access, unreadable = run(scenario())
-    assert "pas une image" in text.last
-    assert "trop grosse" in huge.last
-    assert "ne peut pas écrire" in no_access.last
-    assert "❌ Je n'arrive pas à lire cette image." in unreadable.last and unreadable.view is None
-    assert channel.texts() == []
-
-
-def test_not_a_trade_table_is_explained(nhl, monkeypatch):
-    bot, store, guild, admin, channel, _ = nhl
-
-    async def no_logos(bot, data):
-        return {"lines": RECORDED["lines"], "logos": []}
-    monkeypatch.setattr(bot_module, "read_capture", no_logos)
-    i = run(send_capture(bot, guild, admin, channel))
-    assert "aucun logo" in i.last
-
-
-def test_capture_reading_not_installed(nhl, monkeypatch):
-    bot, store, guild, admin, channel, _ = nhl
-    monkeypatch.setattr(bot_module, "capture_installed", lambda: False)
-
-    async def scenario():
-        panel = (await open_panel(bot, guild, admin, draft=False)).view
-        return await click(panel, button(panel, "transaction"), FakeInteraction(guild, admin))
-    i = run(scenario())
-    assert i.response.modal is None and "pip install -U -r requirements.txt" in i.last
-
-
-def test_preview_is_only_for_its_admin(nhl):
-    bot, store, guild, admin, channel, _ = nhl
-
-    async def scenario():
-        i = await send_capture(bot, guild, admin, channel)
-        other = await press(i.view, "Annoncer", FakeInteraction(guild, admin_of(guild)))
-        admin.guild_permissions.manage_guild = False
-        demoted = await press(i.view, "Annoncer", FakeInteraction(guild, admin))
-        return other, demoted
-    other, demoted = run(scenario())
-    assert other.sent == [] and "réservé aux admins" in demoted.last.lower()
-    assert channel.texts() == []
-
-
-def test_discord_refusing_midway_says_how_many_were_announced(nhl):
-    bot, store, guild, admin, channel, _ = nhl
-    send = channel.send
-    calls = []
-
-    async def flaky(content, **kwargs):
-        calls.append(content)
-        if len(calls) > 2:
-            raise discord.Forbidden(FakeHTTPResponse(), "interdit")
-        return await send(content, **kwargs)
-    channel.send = flaky
-
-    async def scenario():
-        i = await send_capture(bot, guild, admin, channel)
-        done = FakeInteraction(guild, admin)
-        await press(i.view, "Annoncer", done)
-        return done
-    done = run(scenario())
-    assert "2 transaction(s) annoncée(s) sur 8" in done.last
-    # Les deux déjà publiées ne seront pas annoncées une deuxième fois.
-    again = run(send_capture(bot, guild, admin, channel))
-    assert again.last.count("(déjà annoncée)") == 2
-
-
-def test_capture_windows_and_preview_respect_discord_limits(nhl):
-    bot, store, guild, admin, channel, _ = nhl
-
-    async def scenario():
-        many = {"lines": RECORDED["lines"], "logos": RECORDED["logos"]}
-        trades = capture.parse_table(many["lines"], many["logos"]) * 4  # 32 transactions
-        preview = TradePreview(bot, admin.id, guild, trades, channel.id)
-        single = TradePreview(bot, admin.id, guild, trades[:1], channel.id)
-        for modal in (CaptureModal(bot, None), CaptureModal(bot, 5), TradeFixModal(preview, 0, guild)):
-            data = modal.to_dict()
-            assert len(data["title"]) <= 45 and len(data["components"]) <= 5
-            for row in data["components"]:
-                assert len(row["label"]) <= 45, row["label"]
-                assert len(row.get("description") or "") <= 100, row["description"]
-        for view in (preview, single):
-            assert len(view.text(guild)) <= 2000
-            for row in view.to_components():
-                assert len(row["components"]) <= 5
-                for component in row["components"]:
-                    assert len(component.get("label") or "") <= 80
-                    assert len(component.get("options", [])) <= 25
-                    assert all(len(o["label"]) <= 100 for o in component.get("options", []))
-        assert "7 transactions plus anciennes ne sont pas montrées" in preview.text(guild)
-        assert preview.text(guild).endswith("**Annoncer**.")
-        assert [type(c).__name__ for c in single.children] == ["Button", "Button", "Button"]
-    run(scenario())
-
-
 # Transactions SHM automatiques : le bot lit lui-même l'historique de la ligue sur SHM
 
-from draft_bot import moves, shm
+from pathlib import Path
+
+from draft_bot import moves, shm, transactions
 from draft_bot.bot import ShmModal
 
 SHM_PAGE = (Path(__file__).parent / "fixtures" / "shm_historique.html").read_text(encoding="utf-8")
@@ -1725,8 +1465,8 @@ class FakeShmClient:
 
 
 def new_trade(left, left_items, right, right_items):
-    return [shm.ShmSide(left, [capture.Item(t) for t in left_items]),
-            shm.ShmSide(right, [capture.Item(t) for t in right_items])]
+    return [shm.ShmSide(left, [transactions.Item(t) for t in left_items]),
+            shm.ShmSide(right, [transactions.Item(t) for t in right_items])]
 
 
 @pytest.fixture
@@ -1776,7 +1516,7 @@ def test_shm_setup_keeps_old_trades_quiet_then_announces_new_ones(shm_league):
         return i, quiet, nothing_new
     i, quiet, nothing_new = run(scenario())
     assert "C'est branché" in i.last and "lnhs_2" in i.last and "15 transactions déjà sur SHM" in i.last
-    assert store.shm_league(guild.id) == "lnhs_2" and store.trades_channel(guild.id) == channel.id
+    assert store.shm_league(guild.id) == "lnhs_2" and store.shm_channels(guild.id)["trades"] == channel.id
     assert quiet == [] and nothing_new == []
     posted = channel.texts()
     # Les deux nouvelles, une seule fois chacune, la plus ancienne en premier.
@@ -1810,15 +1550,16 @@ def test_shm_status_is_shown_in_the_league_menu(shm_league):
     assert "⚠️ Je n'arrive pas à joindre SHM" in failing
 
 
-def test_trade_already_announced_with_a_capture_is_not_repeated(shm_league):
+def test_trade_already_announced_before_is_not_repeated(shm_league):
+    """Une transaction annoncée autrefois avec l'ancien bouton « Annoncer une transaction »."""
     bot, store, guild, admin, channel, roles, site = shm_league
 
     async def scenario():
         await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
         sides = new_trade("MTL", ["Cole Caufield"], "EDM", ["Evan Bouchard"])
         trade = shm.to_trade(sides, site.pages[1].teams)
-        capture.resolve(trade, guild.roles, [])
-        store.mark_announced(guild.id, capture.fingerprint(trade))
+        transactions.resolve(trade, guild.roles)
+        store.mark_announced(guild.id, transactions.fingerprint(trade))
         site.add_trade(sides)
         await bot.check_shm()
     run(scenario())
@@ -1975,7 +1716,7 @@ class FakeEmoji:
 def test_team_emotes_are_found_by_code_or_nickname():
     emotes = [FakeEmoji("PIT"), FakeEmoji("canadiens"), FakeEmoji("Toronto_Maple_Leafs"), FakeEmoji("NAS"),
               FakeEmoji("PIT2"), FakeEmoji("hockey"), FakeEmoji("BOS", available=False)]
-    found = capture.team_emojis(emotes)
+    found = transactions.team_emojis(emotes)
     assert found == {"PIT": str(emotes[0]), "MTL": str(emotes[1]), "TOR": str(emotes[2]), "NSH": str(emotes[3])}
 
 

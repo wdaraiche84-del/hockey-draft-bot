@@ -2,13 +2,9 @@
 
 import asyncio
 import csv
-import importlib.util
 import io
-import json
 import logging
 import os
-import sys
-import tempfile
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -21,7 +17,7 @@ from discord.ext import tasks
 from discord.utils import escape_markdown
 from dotenv import load_dotenv
 
-from . import capture
+from . import transactions
 from . import formatting as fmt
 from . import moves
 from . import shm
@@ -51,11 +47,6 @@ PANEL_SECONDS = 14 * 60
 MAX_FILE_BYTES = 2_000_000
 # Identifiant fixe du bouton « Faire mon choix » : il marche encore après un redémarrage.
 PICK_BUTTON_ID = "draft:faire-mon-choix"
-# Une capture d'écran fait rarement plus de quelques Mo.
-MAX_IMAGE_BYTES = 10_000_000
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
-# Temps maximal pour lire une capture (le premier essai après un démarrage est le plus lent).
-CAPTURE_SECONDS = 90
 # Le bot regarde l'historique des transactions SHM de chaque ligue suivie toutes les 5 minutes.
 SHM_CHECK_MINUTES = 5
 # Après une longue panne, le bot lit au plus 3 pages SHM (45 transactions) pour rattraper son retard.
@@ -159,8 +150,6 @@ class DraftBot(discord.Client):
         self.sync_lock = asyncio.Lock()
         # Les panneaux /admin ouverts, par serveur, pour les mettre à jour après chaque changement.
         self.panels: defaultdict[int, set[AdminPanel]] = defaultdict(set)
-        # Une seule capture lue à la fois, tous serveurs confondus : la lecture prend de la mémoire.
-        self.capture_lock = asyncio.Semaphore(1)
         register_commands(self)
 
     async def setup_hook(self) -> None:
@@ -674,16 +663,15 @@ class DraftBot(discord.Client):
         posted = 0
         async with self.locks[guild_id]:
             roles = team_roles(guild)
-            learned = self.store.learned_logos(guild_id)
             fresh = []
             for sides in trades:
                 key = shm.shm_key(sides)
                 if self.store.is_announced(guild_id, key):
                     continue
                 trade = shm.to_trade(sides, teams)
-                capture.resolve(trade, roles, learned)
-                # Déjà annoncée avec une capture d'écran : on ne la répète pas.
-                if self.store.is_announced(guild_id, capture.fingerprint(trade)):
+                transactions.resolve(trade, roles)
+                # Déjà annoncée avant (autrefois à partir d'une capture d'écran) : on ne la répète pas.
+                if self.store.is_announced(guild_id, transactions.fingerprint(trade)):
                     self.store.mark_announced(guild_id, key)
                     continue
                 fresh.append((key, trade))
@@ -692,13 +680,13 @@ class DraftBot(discord.Client):
             # SHM met la plus récente en haut : on annonce de la plus ancienne à la plus récente.
             for key, trade in reversed(fresh):
                 if primed and channel is not None:
-                    await channel.send(capture.announcement(trade, roles_by_id, guild_emojis(guild)),
+                    await channel.send(transactions.announcement(trade, roles_by_id, guild_emojis(guild)),
                                        allowed_mentions=PINGS)
                     posted += 1
                     self.store.add_log(guild_id, None, "transaction SHM",
-                                       capture.summary(trade, roles_by_id, 500).replace("**", ""))
+                                       transactions.summary(trade, roles_by_id, 500).replace("**", ""))
                 self.store.mark_announced(guild_id, key)
-                self.store.mark_announced(guild_id, capture.fingerprint(trade))
+                self.store.mark_announced(guild_id, transactions.fingerprint(trade))
             if not primed:
                 self.store.set_shm_primed(guild_id)
         return posted
@@ -1191,9 +1179,9 @@ async def finish_pick(bot: DraftBot, interaction: discord.Interaction, number: i
         else:
             role = bot.team_role(interaction.guild, pick.team)
             name = role.name if role else None
-            team = capture.team_for_name(name or pick.team)
+            team = transactions.team_for_name(name or pick.team)
             text = fmt.announcement(pick, player, forced, name,
-                                    capture.emoji_prefix(team, guild_emojis(interaction.guild)))
+                                    transactions.emoji_prefix(team, guild_emojis(interaction.guild)))
             try:
                 message = await bot.post_with_clock(interaction.guild, channels[1], text)
                 store.set_pick_message(guild_id, pick.number, message.id)
@@ -1653,51 +1641,11 @@ async def send_journal(bot: DraftBot, interaction: discord.Interaction) -> None:
                 file=discord.File(data, filename="journal-draft.csv"))
 
 
-# Annoncer une transaction : l'admin envoie une capture du tableau SHM, vérifie l'aperçu, puis confirme.
-
-def capture_installed() -> bool:
-    """La lecture des captures a besoin de RapidOCR, installé avec requirements.txt."""
-    return all(importlib.util.find_spec(name) is not None for name in ("rapidocr", "onnxruntime", "cv2", "numpy"))
-
-
-NOT_INSTALLED = ("⚠️ La lecture des captures n'est pas encore installée sur l'ordinateur du bot.\n"
-                 "Ferme le bot, tape `pip install -U -r requirements.txt` dans le dossier du bot, puis relance-le.")
-
-
-def is_image(attachment: discord.Attachment) -> bool:
-    content_type = (getattr(attachment, "content_type", None) or "").lower()
-    return content_type.startswith("image/") or attachment.filename.lower().endswith(IMAGE_EXTENSIONS)
-
-
-async def read_capture(bot: DraftBot, data: bytes) -> dict:
-    """Lit la capture dans un processus séparé : le texte et les logos. Lance CaptureError en cas d'échec."""
-    async with bot.capture_lock:
-        with tempfile.TemporaryDirectory(prefix="capture-") as folder:
-            path = Path(folder) / "capture.img"
-            path.write_bytes(data)
-            process = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "draft_bot.capture_reader", str(path),
-                cwd=str(Path(__file__).resolve().parent.parent),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            try:
-                out, err = await asyncio.wait_for(process.communicate(), CAPTURE_SECONDS)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                raise capture.CaptureError("La lecture de la capture a pris trop de temps. Réessaie dans un instant.")
-    if process.returncode != 0:
-        log.error("Lecture de capture impossible : %s", err.decode(errors="replace")[-2000:])
-        raise capture.CaptureError("Je n'arrive pas à lire cette image. Envoie une capture d'écran en PNG ou JPG.")
-    try:
-        return json.loads(out)
-    except ValueError:
-        log.error("Réponse illisible du lecteur de captures : %r", out[:500])
-        raise capture.CaptureError("La lecture de la capture a échoué. Réessaie, et préviens un admin si ça se répète.")
-
+# Les rôles, les emotes et les salons des annonces.
 
 def guild_emojis(guild: discord.Guild) -> dict[str, str]:
     """Les emotes d'équipe du serveur (ex. :PIT:), ajoutées devant le nom des équipes dans les annonces."""
-    return capture.team_emojis(getattr(guild, "emojis", None) or [])
+    return transactions.team_emojis(getattr(guild, "emojis", None) or [])
 
 
 def team_roles(guild: discord.Guild) -> list[discord.Role]:
@@ -1707,262 +1655,6 @@ def team_roles(guild: discord.Guild) -> list[discord.Role]:
 def bot_can_post(channel: discord.TextChannel, guild: discord.Guild) -> bool:
     perms = channel.permissions_for(guild.me)
     return bool(perms.view_channel and perms.send_messages)
-
-
-class CaptureModal(BotModal):
-    def __init__(self, bot: DraftBot, channel_id: int | None):
-        super().__init__(bot, "Annoncer une transaction")
-        self.file = self.ask("Capture des transactions SHM", discord.ui.FileUpload(max_values=1),
-                             "Une capture d'écran du tableau des transactions, avec les logos.")
-        default = [discord.Object(id=channel_id, type=discord.TextChannel)] if channel_id else []
-        self.channel = self.ask(
-            "Salon des annonces de transactions",
-            discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=default),
-            "Le bot y publiera la transaction. Il s'en souviendra.")
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        channel = interaction.guild.get_channel(self.channel.values[0].id)
-        await preview_trades(self.bot, interaction, self.file.values[0], channel)
-
-
-async def preview_trades(bot: DraftBot, interaction: discord.Interaction, image: discord.Attachment,
-                         channel: discord.TextChannel | None) -> None:
-    guild = interaction.guild
-    if channel is None:
-        await reply(interaction, "Salon introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
-        return
-    if not bot_can_post(channel, guild):
-        await reply(interaction, f"🔒 Le bot ne peut pas écrire dans {channel.mention}. Corrige ses permissions "
-                    "ou choisis un autre salon.")
-        return
-    if not is_image(image):
-        await reply(interaction, "Ce fichier n'est pas une image. Envoie une capture d'écran (PNG ou JPG).")
-        return
-    if image.size > MAX_IMAGE_BYTES:
-        await reply(interaction, "Cette image est trop grosse. Envoie une capture d'écran plus petite.")
-        return
-    bot.store.set_trades_channel(guild.id, channel.id)
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    try:
-        found = await read_capture(bot, await image.read())
-        trades = capture.parse_table(found.get("lines", []), found.get("logos", []))
-    except capture.CaptureError as error:
-        await reply(interaction, f"❌ {error}")
-        return
-    view = TradePreview(bot, interaction.user.id, guild, trades, channel.id)
-    view.origin = interaction
-    await reply(interaction, view.text(guild), view=view)
-
-
-class TradePreview(discord.ui.View):
-    """L'aperçu des transactions lues : choisir lesquelles annoncer, corriger, puis annoncer."""
-
-    def __init__(self, bot: DraftBot, user_id: int, guild: discord.Guild, trades: list[capture.Trade],
-                 channel_id: int):
-        super().__init__(timeout=PANEL_SECONDS)
-        self.bot, self.user_id, self.channel_id = bot, user_id, channel_id
-        self.origin: discord.Interaction | None = None
-        self.skipped = max(0, len(trades) - MENU_LIMIT)
-        self.trades = trades[:MENU_LIMIT]
-        roles = team_roles(guild)
-        learned = bot.store.learned_logos(guild.id)
-        for trade in self.trades:
-            capture.resolve(trade, roles, learned)
-        self.announced = {i for i, t in enumerate(self.trades)
-                          if bot.store.is_announced(guild.id, capture.fingerprint(t))}
-        # Par défaut, tout ce qui n'a pas déjà été annoncé est coché.
-        self.selected = [i for i in range(len(self.trades)) if i not in self.announced]
-        self.build(guild)
-
-    def roles_by_id(self, guild: discord.Guild) -> dict[int, discord.Role]:
-        return {role.id: role for role in team_roles(guild)}
-
-    def build(self, guild: discord.Guild) -> None:
-        self.clear_items()
-        count = len(self.trades)
-        if count > 1:
-            menu = discord.ui.Select(
-                placeholder="Coche les transactions à annoncer", min_values=0, max_values=count, row=0,
-                options=[discord.SelectOption(label=self.option_label(guild, i), value=str(i),
-                                              default=i in self.selected) for i in range(count)])
-            menu.callback = self.select_changed
-            self.add_item(menu)
-            fix = discord.ui.Select(
-                placeholder="✏️ Corriger une transaction…", row=1,
-                options=[discord.SelectOption(label=self.option_label(guild, i), value=str(i)) for i in range(count)])
-            fix.callback = self.fix_chosen
-            self.add_item(fix)
-        else:
-            fix_button = discord.ui.Button(label="Corriger", emoji="✏️", style=discord.ButtonStyle.secondary, row=2)
-            fix_button.callback = self.fix_only
-            self.add_item(fix_button)
-        label = "Annoncer" if len(self.selected) <= 1 else f"Annoncer les {len(self.selected)}"
-        announce = discord.ui.Button(label=label, emoji="📣", style=discord.ButtonStyle.success, row=2,
-                                     disabled=not self.selected)
-        announce.callback = self.announce
-        self.add_item(announce)
-        cancel = discord.ui.Button(label="Annuler", style=discord.ButtonStyle.secondary, row=2)
-        cancel.callback = self.cancel
-        self.add_item(cancel)
-
-    def option_label(self, guild: discord.Guild, index: int) -> str:
-        roles = self.roles_by_id(guild)
-        names = []
-        for side in self.trades[index].sides:
-            role = roles.get(side.role_id)
-            names.append(role.name if role else (side.name or "équipe inconnue"))
-        label = f"{index + 1}. " + " ⇄ ".join(names)
-        if index in self.announced:
-            label += " (déjà annoncée)"
-        return label[:100]
-
-    def text(self, guild: discord.Guild) -> str:
-        # Avec beaucoup de transactions, chacune est raccourcie pour que tout tienne dans un message.
-        for limit in (300, 200, 140, 100, 70, 50):
-            text = self.render(guild, limit)
-            if len(text) <= fmt.MAX_MESSAGE:
-                return text
-        return text[:fmt.MAX_MESSAGE - 1] + "…"
-
-    def render(self, guild: discord.Guild, limit: int) -> str:
-        roles = self.roles_by_id(guild)
-        count = len(self.trades)
-        lines = [f"📸 **{count} transaction{'s' if count > 1 else ''} lue{'s' if count > 1 else ''}** dans ta capture. "
-                 "Vérifie bien avant d'annoncer :", ""]
-        for i, trade in enumerate(self.trades):
-            mark = "✅" if i in self.selected else "⬜"
-            line = f"{mark} **{i + 1}.** {capture.summary(trade, roles, limit)}"
-            if i in self.announced:
-                line += " *(déjà annoncée)*"
-            issues = capture.problems(trade, roles)
-            if issues:
-                line += f"\n　⚠️ {', '.join(issues)} : clique sur **Corriger**"
-            lines.append(line)
-        if self.skipped:
-            lines.append(f"*{self.skipped} transactions plus anciennes ne sont pas montrées.*")
-        lines += ["", "Une erreur ? **Corriger**. Tout est bon ? **Annoncer**." if count == 1 else
-                  "Coche celles à annoncer. Une erreur ? **Corriger**. Tout est bon ? **Annoncer**."]
-        return "\n".join(lines)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
-            return False
-        if not is_admin(interaction.user):
-            await reply(interaction, "🔒 Réservé aux admins (permission « Gérer le serveur »).")
-            return False
-        return True
-
-    async def show(self, interaction: discord.Interaction) -> None:
-        self.build(interaction.guild)
-        await interaction.response.edit_message(content=self.text(interaction.guild), view=self)
-
-    async def select_changed(self, interaction: discord.Interaction) -> None:
-        menu = next(item for item in self.children if isinstance(item, discord.ui.Select) and item.row == 0)
-        self.selected = sorted(int(v) for v in menu.values)
-        await self.show(interaction)
-
-    async def fix_chosen(self, interaction: discord.Interaction) -> None:
-        menu = next(item for item in self.children if isinstance(item, discord.ui.Select) and item.row == 1)
-        await interaction.response.send_modal(TradeFixModal(self, int(menu.values[0]), interaction.guild))
-
-    async def fix_only(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(TradeFixModal(self, 0, interaction.guild))
-
-    async def corrected(self, interaction: discord.Interaction, index: int, role_ids: list[int | None],
-                        texts: list[list[str]]) -> None:
-        trade = self.trades[index]
-        guild = interaction.guild
-        for side, role_id in zip(trade.sides, role_ids):
-            if role_id is not None and role_id != side.role_id:
-                side.role_id = role_id
-                # Le bot retient ce logo : la prochaine fois, il trouvera l'équipe tout seul.
-                if side.logo is not None and side.logo.descriptor:
-                    self.bot.store.learn_logo(guild.id, role_id, side.logo.descriptor)
-        trade.texts = texts
-        if self.bot.store.is_announced(guild.id, capture.fingerprint(trade)):
-            self.announced.add(index)
-        else:
-            self.announced.discard(index)
-        if index not in self.selected and index not in self.announced:
-            self.selected = sorted([*self.selected, index])
-        await self.show(interaction)
-
-    async def announce(self, interaction: discord.Interaction) -> None:
-        guild = interaction.guild
-        roles = self.roles_by_id(guild)
-        chosen = [i for i in self.selected if i < len(self.trades)]
-        blocked = [i + 1 for i in chosen if capture.problems(self.trades[i], roles)]
-        if blocked:
-            await reply(interaction, "⚠️ À corriger d'abord : transaction " + ", ".join(map(str, blocked))
-                        + ". Clique **Corriger** et choisis le rôle de chaque équipe.")
-            return
-        channel = guild.get_channel(self.channel_id)
-        if channel is None or not bot_can_post(channel, guild):
-            await reply(interaction, "🔒 Le salon des transactions est introuvable ou le bot ne peut pas y écrire. "
-                        "Recommence avec `/admin`.")
-            return
-        self.stop()
-        await interaction.response.edit_message(content="⏳ Annonce en cours…", view=None)
-        posted = 0
-        try:
-            # SHM met la plus récente en haut : on annonce de la plus ancienne à la plus récente.
-            for i in reversed(chosen):
-                trade = self.trades[i]
-                await channel.send(capture.announcement(trade, roles, guild_emojis(guild)), allowed_mentions=PINGS)
-                posted += 1
-                self.bot.store.mark_announced(guild.id, capture.fingerprint(trade))
-                self.bot.store.add_log(guild.id, interaction.user.id, "transaction",
-                                       capture.summary(trade, roles, 500).replace("**", ""))
-        except discord.HTTPException:
-            log.exception("Annonce de transaction impossible sur le serveur %s", guild.id)
-            await interaction.edit_original_response(
-                content=f"⚠️ {posted} transaction(s) annoncée(s) sur {len(chosen)} : Discord a refusé la suite. "
-                        f"Vérifie les permissions du bot dans {channel.mention}.", view=None)
-            return
-        await interaction.edit_original_response(
-            content=f"✅ {posted} transaction{'s' if posted > 1 else ''} annoncée{'s' if posted > 1 else ''} "
-                    f"dans {channel.mention}.", view=None)
-
-    async def cancel(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(content="Annulé. Rien n'a été annoncé.", view=None)
-
-    async def on_timeout(self) -> None:
-        if self.origin:
-            try:
-                await self.origin.edit_original_response(
-                    content="⌛ Aperçu fermé après 14 minutes. Rien n'a été annoncé. Recommence avec `/admin`.",
-                    view=None)
-            except discord.HTTPException:
-                pass
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
-        await report_error(interaction, error)
-
-
-class TradeFixModal(BotModal):
-    def __init__(self, preview: TradePreview, index: int, guild: discord.Guild):
-        super().__init__(preview.bot, f"Corriger la transaction {index + 1}")
-        self.preview, self.index = preview, index
-        trade = preview.trades[index]
-        self.roles, self.items = [], []
-        for number, (side, texts) in enumerate(zip(trade.sides, trade.texts), start=1):
-            known = side.role_id if side.role_id and guild.get_role(side.role_id) else None
-            self.roles.append(self.ask(
-                f"Équipe {number}",
-                discord.ui.RoleSelect(required=False, min_values=0, max_values=1,
-                                      default_values=[discord.Object(id=known, type=discord.Role)] if known else []),
-                "Le rôle de l'équipe" + (f" (logo : {side.name})." if side.name else ".")))
-            self.items.append(self.ask(
-                f"Ce que l'équipe {number} reçoit",
-                discord.ui.TextInput(style=discord.TextStyle.paragraph, default="\n".join(texts)[:1000] or None,
-                                     max_length=1000, required=True),
-                "Un élément par ligne : un joueur ou un choix de repêchage."))
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        role_ids = [select.values[0].id if select.values else None for select in self.roles]
-        texts = [[line.strip() for line in text_value(item).splitlines() if line.strip()] for item in self.items]
-        await self.preview.corrected(interaction, self.index, role_ids, texts)
 
 
 # Transactions SHM automatiques : le bot lit lui-même l'historique des transactions de la ligue sur SHM.
@@ -2138,7 +1830,6 @@ DRAFT_BUTTON = "Draft"
 MENU_BUTTON = "Menu"
 # Les trois écrans du panneau.
 MENU_SCREEN, DRAFT_SCREEN, OPTIONS_SCREEN = "menu", "draft", "options"
-TRADE_BUTTON = "Annoncer une transaction"
 CHANGE_CHANNELS = "Changer les salons"
 SHM_BUTTON = "Annonces SHM auto"
 
@@ -2203,7 +1894,6 @@ def menu_text(bot: DraftBot, guild: discord.Guild) -> str:
         "Que veux-tu faire ?",
         "",
         f"🏒 **{DRAFT_BUTTON}** : {draft_summary(bot, guild)}",
-        "📣 **Transactions** : annoncer un échange à partir d'une capture SHM",
         "🔄 **Annonces SHM** : rachats, ballottages, transactions et classement publiés tout seuls",
         f"　État : {shm_text(bot, guild)}",
         "",
@@ -2280,7 +1970,7 @@ class PanelButton(discord.ui.Button):
 
 
 class AdminPanel(discord.ui.View):
-    """Le panneau de la ligue. Il s'ouvre sur un menu : Draft, Annoncer une transaction, Annonces SHM.
+    """Le panneau de la ligue. Il s'ouvre sur un menu : Draft, Annonces SHM auto.
 
     L'écran « Draft » ne montre que ce qui sert maintenant :
     - préparation : un seul bouton, celui de la prochaine étape ;
@@ -2309,8 +1999,6 @@ class AdminPanel(discord.ui.View):
         primary, success, danger = discord.ButtonStyle.primary, discord.ButtonStyle.success, discord.ButtonStyle.danger
         if self.screen == MENU_SCREEN:
             self.add("draft", DRAFT_BUTTON, self.show_draft, style=primary, emoji="🏒", row=0)
-            # Les transactions se font toute la saison, avant, pendant et après le draft.
-            self.add("transaction", TRADE_BUTTON, self.open_capture, emoji="📣", row=0)
             self.add("shm", SHM_BUTTON, self.open_shm, emoji="🔄", row=0)
             return panel_text(self.bot, guild, MENU_SCREEN)
         if self.screen == OPTIONS_SCREEN:
@@ -2420,12 +2108,6 @@ class AdminPanel(discord.ui.View):
             return
         await interaction.response.send_modal(ShmModal(self.bot, interaction.guild_id))
 
-    async def open_capture(self, interaction: discord.Interaction) -> None:
-        if not capture_installed():
-            await reply(interaction, NOT_INSTALLED)
-            return
-        await interaction.response.send_modal(CaptureModal(self.bot, self.bot.store.trades_channel(interaction.guild_id)))
-
 
 HELP_TEXT = """\
 🏒 **Le draft : comment faire ton choix**
@@ -2438,12 +2120,11 @@ Tu préfères taper ? `/draft` suivi du nom du joueur fonctionne aussi."""
 
 ADMIN_HELP = """
 
-🛠️ **Admins** : `/admin` ouvre le panneau de la ligue, avec trois boutons :
+🛠️ **Admins** : `/admin` ouvre le panneau de la ligue, avec deux boutons :
 • **Draft** : un seul bouton à la fois, clique dessus pour passer à l'étape suivante, jusqu'à \
 **▶ Lancer le draft**. Pendant le draft : **Choisir pour l'équipe au tour** et **Annuler le dernier choix**. \
 Tout le reste (échanger un choix, délai, journal, changer les salons, les joueurs ou l'ordre) est dans \
 **Plus d'options**.
-• **Annoncer une transaction** : envoie une capture de la transaction SHM, le bot l'annonce.
 • **Annonces SHM auto** : rachats, ballottages, transactions et classement publiés tout seuls."""
 
 
@@ -2458,7 +2139,7 @@ def register_commands(bot: DraftBot) -> None:
                           exc_info=error)
         await reply(interaction, explain_error(error))
 
-    @tree.command(name="admin", description="Ouvrir le panneau de la ligue : draft, transactions, annonces SHM")
+    @tree.command(name="admin", description="Ouvrir le panneau de la ligue : draft et annonces SHM automatiques")
     @app_commands.guild_only()
     @admin_only
     async def admin(interaction: discord.Interaction) -> None:

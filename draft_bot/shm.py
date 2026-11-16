@@ -6,7 +6,7 @@ alors toutes les quelques minutes la page « Historique des transactions », la 
 « Ballottage » et les « Changements par équipe » de l'accueil, et annonce ce qui est nouveau.
 
 Ce module lit la page et parle à SHM. Il ne connaît rien de Discord : les transactions qu'il
-rend sont celles du module `capture`, qui trouve les rôles et écrit les annonces.
+rend sont celles du module `transactions`, qui trouve les rôles et écrit les annonces.
 """
 
 import asyncio
@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 import aiohttp
 from bs4 import BeautifulSoup
 
-from . import capture
+from . import transactions
 from .storage import normalize
 
 log = logging.getLogger("draft_bot.shm")
@@ -110,7 +110,7 @@ def roster_url(slug: str, code: str) -> str:
 @dataclass
 class ShmSide:
     code: str
-    items: list[capture.Item] = field(default_factory=list)
+    items: list[transactions.Item] = field(default_factory=list)
 
 
 @dataclass
@@ -148,18 +148,18 @@ def logo_file(src: str) -> str:
     return src.replace("\\", "/").rsplit("/", 1)[-1].split("?")[0]
 
 
-def parse_item(li, by_logo: dict[str, str]) -> capture.Item:
+def parse_item(li, by_logo: dict[str, str]) -> transactions.Item:
     text = " ".join(li.get_text(" ").split())
     match = PICK.search(text)
     if not match:
-        return capture.Item(text)
+        return transactions.Item(text)
     round_number = int(match.group(1) or match.group(2))
-    year = capture.YEAR.search(text[match.end():]) or capture.YEAR.search(text)
+    year = transactions.YEAR.search(text[match.end():]) or transactions.YEAR.search(text)
     image = li.find("img")
     origin = by_logo.get(logo_file(image["src"])) if image and image.get("src") else None
-    return capture.Item(f"Choix de {capture.ordinal(round_number)} ronde", round_number,
+    return transactions.Item(f"Choix de {transactions.ordinal(round_number)} ronde", round_number,
                         year.group(1) if year else None,
-                        capture.Logo((0, 0, 0, 0), b"", origin) if origin else None)
+                        transactions.Logo(origin) if origin else None)
 
 
 def parse_history(html: str) -> ShmPage:
@@ -191,14 +191,14 @@ def parse_history(html: str) -> ShmPage:
 
 
 def known_team(code: str, name: str | None) -> str | None:
-    """L'équipe LNH connue (code du module capture) qui correspond au code et au nom SHM.
+    """L'équipe LNH connue (code du module transactions) qui correspond au code et au nom SHM.
 
     SHM n'écrit pas toujours les codes comme la LNH (« CBS », « NAS », « TB »). Le nom complet
     du menu tranche : « Columbus Blue Jackets » est CBJ.
     """
     best, found = 0, []
-    for team in capture.TEAM_NAMES:
-        score = max(capture.team_score(code, team), capture.team_score(name, team) if name else 0)
+    for team in transactions.TEAM_NAMES:
+        score = max(transactions.team_score(code, team), transactions.team_score(name, team) if name else 0)
         if score > best:
             best, found = score, [team]
         elif score and score == best:
@@ -206,8 +206,8 @@ def known_team(code: str, name: str | None) -> str | None:
     return found[0] if len(found) == 1 else None
 
 
-def to_trade(sides: list[ShmSide], teams: dict[str, str]) -> capture.Trade:
-    """La transaction dans le format du module capture : il trouve les rôles et écrit l'annonce."""
+def to_trade(sides: list[ShmSide], teams: dict[str, str]) -> transactions.Trade:
+    """La transaction dans le format du module transactions : il trouve les rôles et écrit l'annonce."""
     result = []
     for side in sides:
         name = teams.get(side.code) or side.code or None
@@ -217,10 +217,10 @@ def to_trade(sides: list[ShmSide], teams: dict[str, str]) -> capture.Trade:
             if item.origin is not None:
                 origin_code = item.origin.team
                 origin = known_team(origin_code, teams.get(origin_code))
-                item = capture.Item(item.text, item.round, item.year, capture.Logo((0, 0, 0, 0), b"", origin))
+                item = transactions.Item(item.text, item.round, item.year, transactions.Logo(origin))
             items.append(item)
-        result.append(capture.Side(capture.Logo((0, 0, 0, 0), b"", team), items, name=name))
-    return capture.Trade(result)
+        result.append(transactions.Side(transactions.Logo(team), items, name=name))
+    return transactions.Trade(result)
 
 
 def shm_key(sides: list[ShmSide]) -> str:
