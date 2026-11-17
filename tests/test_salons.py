@@ -1,5 +1,5 @@
 """Les salons du repêchage : sélection des joueurs (tableau + bouton), rondes, guide, centrale,
-attributions, échanges, loterie et « Remplir automatiquement »."""
+attributions, échanges et « Remplir automatiquement »."""
 
 import sqlite3
 
