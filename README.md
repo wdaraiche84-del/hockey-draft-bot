@@ -75,15 +75,20 @@ Ensuite, le bot regarde la page **Historique des transactions** de la ligue tout
 ➡️ @Oilers reçoit : Choix de 2e ronde 2020 (Blues)
 ```
 
-Sous l'annonce, le bot ajoute la ligne de chaque joueur échangé, comme sur la page **Effectifs** de SHM (position, âge, salaire, années de contrat et toutes les cotes) :
+Avec l'annonce, le bot joint une **image de la transaction** : un bloc par équipe, l'un sous l'autre, avec un bandeau aux couleurs de l'équipe, puis ce qu'elle reçoit. Pour chaque joueur : son nom, sa position, son âge, son contrat et toutes ses cotes de la page **Effectifs** de SHM (la cote OA ressort aux couleurs de l'équipe). Pour chaque choix de repêchage : sa ronde, son année et l'équipe d'origine.
+
+Si l'image ne peut pas être faite ou envoyée (par exemple si le bot n'a pas la permission *Joindre des fichiers* dans le salon), l'annonce part en texte, en deux blocs : chaque équipe, puis ce qu'elle reçoit avec la ligne de chaque joueur, comme sur SHM :
 
 ```
+➡️ @Canadiens reçoit :
 Kevin Fiala · AG/AD · 24 ans · 4 250 000 $ · 1 an
 POT FI SH PL ST CH PO HI SK EN PE FA LE SR OFF DEF OA
  88 32 89 90 83 83 83 81 87 90 80 70 60 80  87  82 82
+➡️ @Oilers reçoit :
+Choix de 1re ronde 2027
 ```
 
-Le bot lit pour ça la page **Effectifs** des deux équipes, seulement quand il y a une transaction à annoncer. Si SHM ne répond pas, ou si un joueur n'est pas trouvé, la transaction est annoncée quand même, sans sa ligne. Les choix de repêchage n'ont pas de ligne.
+Le bot lit pour ça la page **Effectifs** des deux équipes, seulement quand il y a une transaction à annoncer. Si SHM ne répond pas, ou si un joueur n'est pas trouvé, la transaction est annoncée quand même, sans ses cotes. Rien n'empêche jamais l'annonce.
 
 Le rôle d'une équipe est trouvé par son nom, son surnom, sa ville ou son code (« Bruins », « Les Bruins de Boston », « Boston », « BOS »). Une transaction déjà annoncée n'est pas répétée (même celles annoncées autrefois avec une capture d'écran), et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
 
@@ -152,7 +157,7 @@ Pour savoir qui a ajouté le bot et recevoir un lien d'invitation, ajouter au li
 ## Installation
 
 1. Sur le [portail des développeurs Discord](https://discord.com/developers/applications), créer une application, puis un bot, et copier son jeton. Décocher *Public Bot*.
-2. Inviter le bot avec les portées `bot` et `applications.commands`, et les permissions *Voir les salons*, *Envoyer des messages*, *Lire l'historique des messages*, *Gérer les messages* et *Mentionner @everyone, @here et tous les rôles* (pour mentionner les rôles d'équipe).
+2. Inviter le bot avec les portées `bot` et `applications.commands`, et les permissions *Voir les salons*, *Envoyer des messages*, *Lire l'historique des messages*, *Joindre des fichiers* (images des transactions et de la roue), *Gérer les messages* et *Mentionner @everyone, @here et tous les rôles* (pour mentionner les rôles d'équipe).
 3. Dans le salon de la liste, retirer *Envoyer des messages* aux membres mais leur laisser *Utiliser les commandes de l'application*.
 4. Créer un rôle par équipe, au nom exact de l'équipe, et le donner à son DG.
 5. Installer et lancer (Python 3.10 ou plus) :

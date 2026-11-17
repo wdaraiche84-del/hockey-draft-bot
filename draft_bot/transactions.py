@@ -252,26 +252,49 @@ def player_block(line: PlayerLine) -> str:
 
 def announcement(trade: Trade, roles_by_id: dict, emojis: dict[str, str] | None = None,
                  players: dict[str, PlayerLine] | None = None) -> str:
-    """L'annonce d'une transaction. Avec `players` (nom normalisé -> ligne SHM), la ligne de chaque
-    joueur échangé est ajoutée en dessous, tant que le message reste assez court pour Discord."""
+    """L'annonce d'une transaction en texte.
+
+    Sans `players`, une ligne par équipe avec ce qu'elle reçoit (c'est le texte qui accompagne
+    l'image). Avec `players` (nom normalisé -> ligne SHM), deux blocs l'un sous l'autre : chaque
+    équipe, puis ce qu'elle reçoit avec la ligne SHM de chaque joueur. Si c'est trop long pour
+    Discord, les cotes sont retirées, puis au besoin on revient aux lignes simples.
+    """
+    short = short_announcement(trade, roles_by_id, emojis)
+    if not players or not any(players.get(normalize(item.text)) for side in trade.sides
+                              for item in side.items if item.round is None):
+        return short
+    for ratings in (True, False):
+        text = block_announcement(trade, roles_by_id, emojis or {}, players, ratings)
+        if len(text) <= MAX_MESSAGE:
+            return text
+    return short
+
+
+def short_announcement(trade: Trade, roles_by_id: dict, emojis: dict[str, str] | None = None) -> str:
     lines = ["🔁 **Transaction**"]
     for side, texts in zip(trade.sides, trade.texts):
         team = side.logo.team if side.logo is not None else None
         lines.append(f"➡️ {emoji_prefix(team, emojis or {})}{side_label(side, roles_by_id, mention=True)} reçoit : "
                      + ", ".join(f"**{escape_markdown(t)}**" for t in texts))
-    text = "\n".join(lines)
-    blocks = []
-    for side in trade.sides:
-        for item in side.items:
-            line = (players or {}).get(normalize(item.text)) if item.round is None else None
-            if line is not None:
+    return "\n".join(lines)
+
+
+def block_announcement(trade: Trade, roles_by_id: dict, emojis: dict[str, str],
+                       players: dict[str, PlayerLine], ratings: bool) -> str:
+    parts = ["🔁 **Transaction**"]
+    for side, texts in zip(trade.sides, trade.texts):
+        team = side.logo.team if side.logo is not None else None
+        parts.append(f"➡️ {emoji_prefix(team, emojis)}{side_label(side, roles_by_id, mention=True)} reçoit :")
+        blocks = []
+        for item, text in zip(side.items, texts):
+            line = players.get(normalize(item.text)) if item.round is None else None
+            if line is None:
+                blocks.append(text.replace("`", "'"))
+            else:
                 block = player_block(line)
-                if len(text) + len("\n```\n") + len("\n\n".join([*blocks, block])) + len("\n```") > MAX_MESSAGE:
-                    break
-                blocks.append(block)
-    if blocks:
-        text += "\n```\n" + "\n\n".join(blocks) + "\n```"
-    return text
+                blocks.append(block if ratings else block.split("\n")[0])
+        parts.append("```\n" + ("\n\n".join(blocks) or "Rien") + "\n```")
+    return "\n".join(parts)
 
 
 def summary(trade: Trade, roles_by_id: dict, limit: int = 200) -> str:

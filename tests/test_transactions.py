@@ -162,3 +162,28 @@ def test_picks_get_no_line_and_announcement_fits_in_discord():
     assert "Joueur 0 · C" in text and "Kevin Fiala ·" not in text
     # Sans lignes connues : l'annonce de toujours.
     assert "```" not in transactions.announcement(trade, {}, players={})
+
+
+def test_text_announcement_has_one_block_per_team():
+    trade = Trade([Side(Logo("CGY"), [Item("Kevin Fiala"), Item("Inconnu `x`")]),
+                   Side(Logo("EDM"), [Item("Choix de 2e ronde", 2, "2020", Logo("STL"))])])
+    transactions.resolve(trade, [])
+    text = transactions.announcement(trade, {}, players={"kevin fiala": fiala()})
+    assert text == ("🔁 **Transaction**\n➡️ **Calgary Flames** reçoit :\n```\n"
+                    + transactions.player_block(fiala()) + "\n\nInconnu 'x'\n```\n"
+                    "➡️ **Edmonton Oilers** reçoit :\n```\nChoix de 2e ronde 2020 (St. Louis Blues)\n```")
+
+
+def test_text_announcement_drops_ratings_then_blocks_when_too_long():
+    names = [f"Joueur {i}" for i in range(20)]
+    trade = Trade([Side(Logo("CGY"), [Item(n) for n in names]), Side(Logo("EDM"), [Item("Kevin Fiala")])])
+    transactions.resolve(trade, [])
+    players = {f"joueur {i}": transactions.PlayerLine(f"Joueur {i}", "C", "25", "1 000 000", "2", fiala().ratings)
+               for i in range(20)}
+    text = transactions.announcement(trade, {}, players=players)
+    assert len(text) <= transactions.MAX_MESSAGE and "Joueur 0 · C" in text and "POT" not in text
+    huge = Trade([Side(Logo("CGY"), [Item(f"Joueur {i}") for i in range(80)]), Side(Logo("EDM"), [Item("A")])])
+    transactions.resolve(huge, [])
+    players.update({f"joueur {i}": transactions.PlayerLine(f"Joueur {i}", "C", "25", "1 000 000", "2", ())
+                    for i in range(80)})
+    assert transactions.announcement(huge, {}, players=players) == transactions.announcement(huge, {})
