@@ -30,15 +30,14 @@ Les réponses du bot sont privées : les salons restent propres. Après un choix
 
 ### Le panneau de la ligue (`/admin`)
 
-Le bot ne sert pas qu'au draft : il anime la ligue toute la saison. `/admin` s'ouvre sur un menu avec trois boutons, et l'état de chaque partie :
+Le bot ne sert pas qu'au draft : il anime la ligue toute la saison. `/admin` s'ouvre sur un menu avec deux boutons, et l'état de chaque partie :
 
 ```
 🏒 Panneau de la ligue
 🏒 Draft : en cours (12 choix faits sur 64)
-📣 Transactions : annoncer un échange à partir d'une capture SHM
 🔄 Annonces SHM : rachats, ballottages, transactions et classement publiés tout seuls
    État : ligue lnhs_2 (✅ lu il y a 3 min)
-[🏒 Draft] [📣 Annoncer une transaction] [🔄 Annonces SHM auto]
+[🏒 Draft] [🔄 Annonces SHM auto]
 ```
 
 L'écran **Draft** ne montre qu'un seul bouton à la fois : la prochaine chose à faire, avec **⚙️ Plus d'options** et **⬅️ Menu** pour revenir au menu. Le panneau se met à jour tout seul après chaque changement.
@@ -56,24 +55,6 @@ L'écran **Draft** ne montre qu'un seul bouton à la fois : la prochaine chose �
 
 Le panneau se ferme après 14 minutes (limite de Discord) : refaire `/admin` pour le rouvrir.
 
-### Annoncer une transaction
-
-Le bouton **📣 Annoncer une transaction** est dans le menu de `/admin`, avant, pendant et après le draft.
-
-1. Faire une capture d'écran du tableau des transactions de SHM (colonnes « Vers » et « Éléments », avec les logos). Une partie du tableau suffit.
-2. Cliquer sur **Annoncer une transaction**, ajouter la capture et choisir le salon des annonces de transactions (le bot s'en souvient).
-3. Le bot montre ce qu'il a lu : qui reçoit quoi, pour chaque transaction. Tout est coché, sauf ce qui a déjà été annoncé. Décocher ce qu'il ne faut pas annoncer.
-4. Une erreur ? **Corriger** : choisir le rôle de l'équipe et corriger les éléments (un par ligne). Le bot retient ce logo pour la prochaine fois.
-5. **Annoncer** : une annonce par transaction, de la plus ancienne à la plus récente, qui mentionne le rôle de chaque équipe :
-
-```
-🔁 Transaction
-➡️ @Flames reçoit : Daniil Tarasov
-➡️ @Oilers reçoit : Choix de 2e ronde 2020 (Blues)
-```
-
-La lecture est **gratuite** et se fait sur l'ordinateur du bot (RapidOCR) : aucune image n'est envoyée ailleurs. Les logos des 30 équipes SHM sont reconnus. Le rôle d'une équipe est trouvé par son nom, son surnom, sa ville ou son code (« Bruins », « Les Bruins de Boston », « Boston », « BOS »). Si deux rôles conviennent, ou aucun, l'aperçu le signale et l'admin choisit avec **Corriger**. Rien n'est publié avant le clic sur **Annoncer**.
-
 ### Emotes d'équipe
 
 Si le serveur a une emote pour une équipe, le bot la met devant le nom de l'équipe dans les annonces de transactions et de choix au draft. L'emote doit porter le code ou le nom de l'équipe : `:PIT:`, `:pit:`, `:Penguins:` ou `:Pittsburgh_Penguins:` (pas `:PIT2:`). Rien à régler : le bot les trouve tout seul.
@@ -86,7 +67,25 @@ Le bot peut aussi lire lui-même les transactions sur SHM et les annoncer sans q
 2. Dans le menu de `/admin` : **🔄 Annonces SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir un salon pour chaque sorte d'annonce : transactions (obligatoire), ballottage, rachats et classement. Le même salon peut servir pour plusieurs. Laisser un salon vide arrête cette sorte d'annonce ; quand on la rallume, seul ce qui arrive ensuite est annoncé.
 3. Le bot essaie tout de suite : s'il ne voit pas la ligue, il le dit et ne change rien. S'il la voit, les transactions déjà sur SHM ne sont **pas** réannoncées : seules les suivantes le seront.
 
-Ensuite, le bot regarde la page **Historique des transactions** de la ligue toutes les 5 minutes et annonce chaque nouvelle transaction, de la plus ancienne à la plus récente, dans le même format que les captures. Une transaction déjà annoncée avec une capture n'est pas répétée, et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
+Ensuite, le bot regarde la page **Historique des transactions** de la ligue toutes les 5 minutes et annonce chaque nouvelle transaction, de la plus ancienne à la plus récente, en mentionnant le rôle de chaque équipe :
+
+```
+🔁 Transaction
+➡️ @Flames reçoit : Daniil Tarasov
+➡️ @Oilers reçoit : Choix de 2e ronde 2020 (Blues)
+```
+
+Sous l'annonce, le bot ajoute la ligne de chaque joueur échangé, comme sur la page **Effectifs** de SHM (position, âge, salaire, années de contrat et toutes les cotes) :
+
+```
+Kevin Fiala · AG/AD · 24 ans · 4 250 000 $ · 1 an
+POT FI SH PL ST CH PO HI SK EN PE FA LE SR OFF DEF OA
+ 88 32 89 90 83 83 83 81 87 90 80 70 60 80  87  82 82
+```
+
+Le bot lit pour ça la page **Effectifs** des deux équipes, seulement quand il y a une transaction à annoncer. Si SHM ne répond pas, ou si un joueur n'est pas trouvé, la transaction est annoncée quand même, sans sa ligne. Les choix de repêchage n'ont pas de ligne.
+
+Le rôle d'une équipe est trouvé par son nom, son surnom, sa ville ou son code (« Bruins », « Les Bruins de Boston », « Boston », « BOS »). Une transaction déjà annoncée n'est pas répétée (même celles annoncées autrefois avec une capture d'écran), et renommer un rôle ne fait jamais réannoncer d'anciennes transactions. Après une longue panne du bot, il lit jusqu'à 3 pages pour rattraper son retard.
 
 Le bot suit aussi le **ballottage** de la ligue, dans le même salon :
 
@@ -156,7 +155,7 @@ Pour savoir qui a ajouté le bot et recevoir un lien d'invitation, ajouter au li
 2. Inviter le bot avec les portées `bot` et `applications.commands`, et les permissions *Voir les salons*, *Envoyer des messages*, *Lire l'historique des messages*, *Gérer les messages* et *Mentionner @everyone, @here et tous les rôles* (pour mentionner les rôles d'équipe).
 3. Dans le salon de la liste, retirer *Envoyer des messages* aux membres mais leur laisser *Utiliser les commandes de l'application*.
 4. Créer un rôle par équipe, au nom exact de l'équipe, et le donner à son DG.
-5. Installer et lancer (Python 3.11 ou plus pour lire les captures de transactions ; 3.10 suffit pour le reste) :
+5. Installer et lancer (Python 3.10 ou plus) :
 
 ```
 pip install -r requirements.txt
@@ -169,7 +168,7 @@ python -m draft_bot
 
 ### Mettre à jour le bot
 
-Après avoir remplacé le dossier `draft_bot` et le fichier `requirements.txt` par la nouvelle version, mettre à jour les bibliothèques une fois (le panneau admin demande discord.py 2.7 ou plus, et la lecture des captures télécharge environ 100 Mo la première fois), puis relancer :
+Après avoir remplacé le dossier `draft_bot` et le fichier `requirements.txt` par la nouvelle version, mettre à jour les bibliothèques une fois (le panneau admin demande discord.py 2.7 ou plus), puis relancer :
 
 ```
 pip install -U -r requirements.txt
@@ -229,8 +228,6 @@ Le dépôt est prêt pour Railway : `railway.json` donne la commande de démarra
 Sans volume, le bot refuse de démarrer sur Railway, pour ne jamais perdre un draft au redéploiement. Une deuxième copie du bot ne peut pas ouvrir la même base : pendant un redéploiement, la nouvelle copie attend que l'ancienne s'arrête.
 
 Chaque merge sur `main` redéploie le bot automatiquement.
-
-La lecture d'une capture se fait dans un processus à part : elle utilise environ 400 Mo de mémoire pendant quelques secondes, puis les rend. Une seule capture est lue à la fois.
 
 ## Tests
 

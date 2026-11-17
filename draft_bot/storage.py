@@ -45,12 +45,6 @@ CREATE TABLE IF NOT EXISTS list_messages (
     content TEXT NOT NULL,
     PRIMARY KEY (guild_id, position)
 );
-CREATE TABLE IF NOT EXISTS trade_logos (
-    guild_id INTEGER NOT NULL,
-    role_id INTEGER NOT NULL,
-    descriptor BLOB NOT NULL,
-    at REAL NOT NULL
-);
 CREATE TABLE IF NOT EXISTS announced_trades (
     guild_id INTEGER NOT NULL,
     fingerprint TEXT NOT NULL,
@@ -102,9 +96,6 @@ CONFIG_COLUMNS = {
 
 # Les sortes d'annonces SHM, chacune dans son propre salon si on veut.
 SHM_KINDS = ("trades", "waivers", "buyouts", "standings")
-
-# Logos appris par serveur (corrections des admins) : assez pour toutes les équipes et leurs variantes.
-LEARNED_LOGOS_KEPT = 200
 
 
 def normalize(text: str) -> str:
@@ -472,20 +463,6 @@ class Store:
                 (guild_id, message_id),
             )
 
-    # Annonces de transactions
-
-    def set_trades_channel(self, guild_id: int, channel_id: int) -> None:
-        with self.db:
-            self.db.execute(
-                "INSERT INTO config (guild_id, trades_channel_id) VALUES (?, ?) "
-                "ON CONFLICT (guild_id) DO UPDATE SET trades_channel_id = excluded.trades_channel_id",
-                (guild_id, channel_id),
-            )
-
-    def trades_channel(self, guild_id: int) -> int | None:
-        row = self.db.execute("SELECT trades_channel_id FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
-        return row[0] if row else None
-
     # Transactions SHM automatiques
 
     def set_shm_league(self, guild_id: int, slug: str | None) -> None:
@@ -601,25 +578,6 @@ class Store:
     def set_shm_buyouts_primed(self, guild_id: int) -> None:
         with self.db:
             self.db.execute("UPDATE config SET shm_buyouts_primed = 1 WHERE guild_id = ?", (guild_id,))
-
-    def learned_logos(self, guild_id: int) -> list[tuple[int, bytes]]:
-        """Les logos qu'un admin a associés à un rôle, du plus récent au plus ancien."""
-        rows = self.db.execute(
-            "SELECT role_id, descriptor FROM trade_logos WHERE guild_id = ? ORDER BY at DESC, rowid DESC",
-            (guild_id,),
-        ).fetchall()
-        return [(row[0], bytes(row[1])) for row in rows]
-
-    def learn_logo(self, guild_id: int, role_id: int, descriptor: bytes) -> None:
-        with self.db:
-            # Le même logo associé à un autre rôle : la dernière correction l'emporte.
-            self.db.execute("DELETE FROM trade_logos WHERE guild_id = ? AND descriptor = ?", (guild_id, descriptor))
-            self.db.execute("INSERT INTO trade_logos VALUES (?, ?, ?, ?)", (guild_id, role_id, descriptor, time.time()))
-            self.db.execute(
-                "DELETE FROM trade_logos WHERE guild_id = ? AND rowid NOT IN (SELECT rowid FROM trade_logos "
-                "WHERE guild_id = ? ORDER BY at DESC, rowid DESC LIMIT ?)",
-                (guild_id, guild_id, LEARNED_LOGOS_KEPT),
-            )
 
     def is_announced(self, guild_id: int, fingerprint: str) -> bool:
         return self.db.execute(

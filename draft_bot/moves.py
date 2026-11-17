@@ -6,7 +6,7 @@ Ce module écrit les messages. Il ne parle ni à SHM ni à Discord : il reçoit 
 
 from discord.utils import escape_markdown
 
-from . import capture, shm
+from . import shm, transactions
 
 
 def team_label(code: str | None, teams: dict[str, str], roles: list, emojis: dict[str, str]) -> str:
@@ -15,12 +15,12 @@ def team_label(code: str | None, teams: dict[str, str], roles: list, emojis: dic
         return "**❓ équipe inconnue**"
     name = teams.get(code)
     team = shm.known_team(code, name)
-    role = capture.role_for_team(team, roles) if team else None
+    role = transactions.role_for_team(team, roles) if team else None
     if role is not None:
         label = role.mention
     else:
-        label = f"**{escape_markdown(name or (capture.TEAM_NAMES.get(team) if team else None) or code)}**"
-    return capture.emoji_prefix(team, emojis) + label
+        label = f"**{escape_markdown(name or (transactions.TEAM_NAMES.get(team) if team else None) or code)}**"
+    return transactions.emoji_prefix(team, emojis) + label
 
 
 def details(waiver: shm.ShmWaiver) -> str:
@@ -94,10 +94,10 @@ def standing_line(rank: int, row: shm.Standing, teams: dict[str, str], emojis: d
                   moved: int = 0) -> str:
     name = teams.get(row.team)
     team = shm.known_team(row.team, name)
-    name = name or (capture.TEAM_NAMES.get(team) if team else None) or row.team
+    name = name or (transactions.TEAM_NAMES.get(team) if team else None) or row.team
     points = row.points or "0"
     arrow = f" 🟢 ▲{moved}" if moved > 0 else f" 🔴 ▼{-moved}" if moved < 0 else ""
-    return (f"`{rank:>2}.` {capture.emoji_prefix(team, emojis)}{escape_markdown(name)} — "
+    return (f"`{rank:>2}.` {transactions.emoji_prefix(team, emojis)}{escape_markdown(name)} — "
             f"**{points} pt{'s' if points not in ('0', '1') else ''}** · {row.games or 0} PJ · "
             f"{row.wins or 0}-{row.losses or 0}-{row.otl or 0}{arrow}")
 
