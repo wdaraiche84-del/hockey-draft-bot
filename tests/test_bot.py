@@ -18,11 +18,12 @@ ids = itertools.count(1000)
 
 
 class FakeMessage:
-    def __init__(self, channel, content, view=None):
+    def __init__(self, channel, content, view=None, file=None):
         self.id = next(ids)
         self.channel = channel
         self.content = content
         self.view = view
+        self.file = file
 
 
 class FakeHTTPResponse:
@@ -47,9 +48,10 @@ class FakePartial:
 
 
 class FakePermissions:
-    def __init__(self, allowed=True, manage_guild=False):
+    def __init__(self, allowed=True, manage_guild=False, attach_files=False):
         self.view_channel = self.send_messages = self.read_message_history = allowed
         self.manage_guild = manage_guild
+        self.attach_files = attach_files
 
 
 class FakeChannel:
@@ -60,10 +62,15 @@ class FakeChannel:
         self.messages = {}
         self.bot_allowed = bot_allowed
         self.sent_mentions = []
+        # Par défaut, le bot ne peut pas joindre de fichiers : les annonces partent en texte.
+        self.attach_files = False
+        self.refuse_files = False
 
     async def send(self, content, **kwargs):
+        if kwargs.get("file") is not None and self.refuse_files:
+            raise discord.HTTPException(FakeHTTPResponse(), "fichier refusé")
         self.sent_mentions.append(kwargs.get("allowed_mentions"))
-        message = FakeMessage(self, content, kwargs.get("view"))
+        message = FakeMessage(self, content, kwargs.get("view"), kwargs.get("file"))
         self.messages[message.id] = message
         return message
 
@@ -71,7 +78,7 @@ class FakeChannel:
         return FakePartial(self, message_id)
 
     def permissions_for(self, member):
-        return FakePermissions(self.bot_allowed)
+        return FakePermissions(self.bot_allowed, attach_files=self.attach_files)
 
     def texts(self):
         return [m.content for m in self.messages.values()]
@@ -1566,9 +1573,8 @@ def test_traded_players_are_announced_with_their_shm_line(shm_league):
     assert quiet_reads == []
     assert reads == [("lnhs_2", "MTL"), ("lnhs_2", "EDM")] and site.roster_requests == reads
     assert channel.texts() == [
-        f"🔁 **Transaction**\n➡️ {roles['Canadiens'].mention} reçoit : **Kevin Fiala**\n"
-        f"➡️ {roles['Oilers'].mention} reçoit : **Ilya Samsonov**, **Choix de 1re ronde 2027**\n"
-        f"```\n{FIALA}\n\n{SAMSONOV}\n```"]
+        f"🔁 **Transaction**\n➡️ {roles['Canadiens'].mention} reçoit :\n```\n{FIALA}\n```\n"
+        f"➡️ {roles['Oilers'].mention} reçoit :\n```\n{SAMSONOV}\n\nChoix de 1re ronde 2027\n```"]
 
 
 def test_trade_is_announced_without_lines_when_shm_rosters_fail(shm_league):
@@ -1601,7 +1607,85 @@ def test_player_not_found_on_shm_is_announced_without_a_line(shm_league):
         site.add_trade(new_trade("MTL", ["Kevin Fiala", "Joueur Inconnu"], "EDM", ["Evan Bouchard"]))
         await bot.check_shm()
     run(scenario())
-    assert channel.texts()[0].endswith(f"**Evan Bouchard**\n```\n{FIALA}\n```")
+    assert channel.texts()[0] == (
+        f"🔁 **Transaction**\n➡️ {roles['Canadiens'].mention} reçoit :\n```\n{FIALA}\n\nJoueur Inconnu\n```\n"
+        f"➡️ {roles['Oilers'].mention} reçoit :\n```\nEvan Bouchard\n```")
+
+
+def test_trade_is_announced_with_its_image_when_the_bot_can_attach_files(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    site.rosters["MTL"] = shm.parse_roster(SHM_ROSTER_STATS)
+    channel.attach_files = True
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.add_trade(new_trade("MTL", ["Kevin Fiala"], "EDM", ["Ilya Samsonov", "Choix de 1re ronde 2027"]))
+        await bot.check_shm()
+    run(scenario())
+    message = list(channel.messages.values())[-1]
+    # Le texte court mentionne les équipes ; les cotes sont dans l'image.
+    assert message.content == (
+        f"🔁 **Transaction**\n➡️ {roles['Canadiens'].mention} reçoit : **Kevin Fiala**\n"
+        f"➡️ {roles['Oilers'].mention} reçoit : **Ilya Samsonov**, **Choix de 1re ronde 2027**")
+    assert message.file is not None and message.file.filename == "transaction.png"
+    assert message.file.fp.read(8) == b"\x89PNG\r\n\x1a\n"
+    assert channel.mentions()[-1] is bot_module.PINGS
+
+
+def test_trade_falls_back_to_text_blocks_when_the_image_fails(shm_league, monkeypatch, caplog):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    site.rosters["MTL"] = shm.parse_roster(SHM_ROSTER_STATS)
+    channel.attach_files = True
+
+    def broken(*args):
+        raise RuntimeError("bogue imprévu dans l'image")
+    monkeypatch.setattr(bot_module.trade_card, "render_png", broken)
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.add_trade(new_trade("MTL", ["Kevin Fiala"], "EDM", ["Choix de 1re ronde 2027"]))
+        await bot.check_shm()
+    with caplog.at_level(logging.ERROR):
+        run(scenario())
+    message = list(channel.messages.values())[-1]
+    assert message.file is None
+    assert message.content == (
+        f"🔁 **Transaction**\n➡️ {roles['Canadiens'].mention} reçoit :\n```\n{FIALA}\n```\n"
+        f"➡️ {roles['Oilers'].mention} reçoit :\n```\nChoix de 1re ronde 2027\n```")
+    assert "Image de la transaction impossible" in caplog.text
+    assert store.is_announced(guild.id, shm.shm_key(new_trade("MTL", ["Kevin Fiala"], "EDM",
+                                                             ["Choix de 1re ronde 2027"])))
+
+
+def test_trade_falls_back_to_text_when_discord_refuses_the_image(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    site.rosters["MTL"] = shm.parse_roster(SHM_ROSTER_STATS)
+    channel.attach_files = True
+    channel.refuse_files = True
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.add_trade(new_trade("MTL", ["Kevin Fiala"], "EDM", ["Evan Bouchard"]))
+        await bot.check_shm()
+        # Une seule annonce, en texte : jamais en double.
+        await bot.check_shm()
+    run(scenario())
+    trades = [m for m in channel.messages.values() if m.content.startswith("🔁")]
+    assert len(trades) == 1 and trades[0].file is None and FIALA in trades[0].content
+
+
+def test_trade_is_announced_with_an_image_even_without_shm_lines(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    channel.attach_files = True
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.roster_error = shm.ShmError("SHM ne répond pas.")
+        site.add_trade(new_trade("MTL", ["Kevin Fiala"], "EDM", ["Evan Bouchard"]))
+        await bot.check_shm()
+    run(scenario())
+    message = list(channel.messages.values())[-1]
+    assert message.file is not None and message.content.endswith("reçoit : **Evan Bouchard**")
 
 
 def test_shm_status_is_shown_in_the_league_menu(shm_league):

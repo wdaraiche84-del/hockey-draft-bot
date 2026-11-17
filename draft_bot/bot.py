@@ -21,6 +21,7 @@ from . import transactions
 from . import formatting as fmt
 from . import moves
 from . import shm
+from . import trade_card
 from . import wheel
 from .storage import AlreadyRunning, Pick, PickError, Player, Store, normalize, team_display
 
@@ -717,8 +718,7 @@ class DraftBot(discord.Client):
             # SHM met la plus récente en haut : on annonce de la plus ancienne à la plus récente.
             for key, trade in reversed(fresh):
                 if primed and channel is not None:
-                    await channel.send(transactions.announcement(trade, roles_by_id, guild_emojis(guild), players),
-                                       allowed_mentions=PINGS)
+                    await self.send_trade(channel, guild, trade, roles_by_id, players)
                     posted += 1
                     self.store.add_log(guild_id, None, "transaction SHM",
                                        transactions.summary(trade, roles_by_id, 500).replace("**", ""))
@@ -727,6 +727,29 @@ class DraftBot(discord.Client):
             if not primed:
                 self.store.set_shm_primed(guild_id)
         return posted
+
+    async def send_trade(self, channel: discord.TextChannel, guild: discord.Guild, trade: transactions.Trade,
+                         roles_by_id: dict, players: dict[str, transactions.PlayerLine] | None) -> None:
+        """Envoie l'annonce d'une transaction : le texte court (qui mentionne les équipes) avec l'image
+        de la transaction. Si l'image ne peut pas être faite ou envoyée (le bot n'a pas le droit de
+        joindre des fichiers, par exemple), l'annonce part en texte, en deux blocs avec les cotes."""
+        emojis = guild_emojis(guild)
+        card = None
+        if bot_can_attach(channel, guild):
+            try:
+                card = await asyncio.to_thread(trade_card.render_png, trade, players or {})
+            except Exception:
+                # L'image est un plus : une erreur imprévue n'empêche jamais l'annonce.
+                log.exception("Image de la transaction impossible à faire (serveur %s)", guild.id)
+        if card is not None:
+            try:
+                await channel.send(transactions.announcement(trade, roles_by_id, emojis),
+                                   file=discord.File(io.BytesIO(card), filename="transaction.png"),
+                                   allowed_mentions=PINGS)
+                return
+            except discord.HTTPException as error:
+                log.warning("Image de la transaction refusée par Discord (serveur %s) : %s", guild.id, error)
+        await channel.send(transactions.announcement(trade, roles_by_id, emojis, players), allowed_mentions=PINGS)
 
     async def publish_waivers(self, guild_id: int, channel: discord.TextChannel | None, page: shm.WaiversPage,
                               claims: dict[str, str], complete: bool) -> int:
@@ -1692,6 +1715,10 @@ def team_roles(guild: discord.Guild) -> list[discord.Role]:
 def bot_can_post(channel: discord.TextChannel, guild: discord.Guild) -> bool:
     perms = channel.permissions_for(guild.me)
     return bool(perms.view_channel and perms.send_messages)
+
+
+def bot_can_attach(channel: discord.TextChannel, guild: discord.Guild) -> bool:
+    return bool(getattr(channel.permissions_for(guild.me), "attach_files", False))
 
 
 # Transactions SHM automatiques : le bot lit lui-même l'historique des transactions de la ligue sur SHM.
