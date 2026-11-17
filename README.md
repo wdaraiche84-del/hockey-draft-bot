@@ -60,9 +60,7 @@ Dans **Plus d'options**, **Changer les salons** montre le rôle de chaque salon.
 - **Sélection des joueurs** : un tableau (qui est au tour, temps limite, prochains et derniers choix) avec le bouton **Faire mon choix**. Il est republié en bas du salon à chaque changement de tour (l'équipe au tour est mentionnée) ; les annonces n'ont alors plus de « Au tour de ».
 - **Ronde 1** et **Ronde 2 et plus** : chaque choix est annoncé dans le salon de sa ronde.
 - **Salons en plus** : **Fonctionnement** (guide court, épinglé, mis à jour quand le délai change), **Centrale** (les choix de chaque équipe, mis à jour à chaque choix), **Attributions** (qui possède quel choix, avec « via » l'équipe d'origine après un échange) et **Échanges de choix**.
-- **Remplir automatiquement** : le bot trouve les salons d'après leur nom (ex. « ronde-1 », « loterie »), en priorité dans une catégorie « Repêchage » ou « Draft », et demande de confirmer.
-
-**Loterie** (dans **Plus d'options**) : une équipe par ligne avec ses chances (`San Jose 18,5`), de la pire à la meilleure, et le nombre de choix tirés. Le résultat est tiré et noté au journal avant l'animation ; la roue (parts selon les chances) tourne une fois par choix tiré, puis l'ordre final est publié. Les équipes non tirées gardent leur rang. Cet ordre est ensuite déjà écrit dans **Changer l'ordre**.
+- **Remplir automatiquement** : le bot trouve les salons d'après leur nom (ex. « ronde-1 », « fonctionnement »), en priorité dans une catégorie « Repêchage » ou « Draft », et demande de confirmer.
 
 Le panneau se ferme après 14 minutes (limite de Discord) : refaire `/admin` pour le rouvrir.
 

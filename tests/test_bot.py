@@ -10,8 +10,8 @@ import pytest
 
 import draft_bot.bot as bot_module
 from draft_bot import formatting as fmt
-from draft_bot.bot import (AdminPanel, ChannelsModal, DelayModal, DraftBot, ExtraChannelsModal, LotteryModal,
-                           OrderModal, PickButtonView, PlayerMenu, PlayersModal, SearchModal, TradeModal)
+from draft_bot.bot import (AdminPanel, ChannelsModal, DelayModal, DraftBot, ExtraChannelsModal, OrderModal,
+                           PickButtonView, PlayerMenu, PlayersModal, SearchModal, TradeModal)
 from draft_bot.storage import Store
 
 ids = itertools.count(1000)
@@ -885,11 +885,11 @@ def test_more_options_keeps_every_feature_and_back_returns(league):
         panel_i = await open_panel(bot, guild, admin)
         panel = panel_i.view
         more = await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
-        assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "loterie", "retour"]
+        assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"]
         assert "Plus d'options" in more.last and "#draft-liste" in more.last and "4 choix" in more.last
         modals = {}
         for key, modal in (("joueurs", PlayersModal), ("ordre", OrderModal),
-                           ("delai", DelayModal), ("echange", TradeModal), ("loterie", LotteryModal)):
+                           ("delai", DelayModal), ("echange", TradeModal)):
             i = await click(panel, button(panel, key), FakeInteraction(guild, admin))
             assert isinstance(i.response.modal, modal), key
             modals[key] = i.response.modal
@@ -902,7 +902,7 @@ def test_more_options_keeps_every_feature_and_back_returns(league):
             modals[key] = i.response.modal
         assert modals["principaux"].list_channel.default_values  # les salons actuels sont déjà choisis
         await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
-        assert "loterie" in keys(panel)
+        assert "journal" in keys(panel)
         back = await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
         assert keys(panel) == ["choisir", "annuler", "options", "menu"] and "en cours" in back.last
     run(scenario())
@@ -1140,8 +1140,7 @@ def test_windows_respect_discord_limits():
         for modal in (SearchModal(bot, False), SearchModal(bot, True), ChannelsModal(bot, (1, 2)),
                       ChannelsModal(bot, None), PlayersModal(bot), OrderModal(bot), DelayModal(bot, 3600, 5),
                       DelayModal(bot, 0, None), TradeModal(bot), ExtraChannelsModal(bot, {}),
-                      ExtraChannelsModal(bot, {"guide": 5}), LotteryModal(bot, {}), LotteryModal(bot, {"lottery": 3}),
-                      ChannelsModal(bot, (1, 2), {"board": 3, "round1": 4}), OrderModal(bot, ["A", "B"])):
+                      ExtraChannelsModal(bot, {"guide": 5}), ChannelsModal(bot, (1, 2), {"board": 3, "round1": 4})):
             data = modal.to_dict()
             assert len(data["title"]) <= 45 and len(data["components"]) <= 5
             for row in data["components"]:
@@ -1192,7 +1191,7 @@ def test_every_panel_screen_shows_few_buttons():
         ["draft", "shm"],
         ["salons", "options", "menu"], ["joueurs", "options", "menu"], ["ordre", "options", "menu"], ["lancer", "options", "menu"],
         ["choisir", "annuler", "options", "menu"], ["annuler", "options", "menu"],
-        ["salons", "joueurs", "ordre", "delai", "echange", "journal", "loterie", "retour"],
+        ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"],
         ["principaux", "plus", "auto", "retour"],
         ["draft", "shm"],
     ]

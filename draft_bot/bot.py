@@ -20,7 +20,6 @@ from dotenv import load_dotenv
 
 from . import transactions
 from . import formatting as fmt
-from . import lottery
 from . import moves
 from . import shm
 from . import trade_card
@@ -155,8 +154,6 @@ class DraftBot(discord.Client):
         self.sync_lock = asyncio.Lock()
         # Les panneaux /admin ouverts, par serveur, pour les mettre à jour après chaque changement.
         self.panels: defaultdict[int, set[AdminPanel]] = defaultdict(set)
-        # Les serveurs où une loterie est en train d'être tirée (une seule à la fois).
-        self.lotteries: set[int] = set()
         register_commands(self)
 
     async def setup_hook(self) -> None:
@@ -1554,12 +1551,9 @@ CHANNEL_NAMES = {
     "recap": "Centrale (choix de chaque équipe)",
     "owners": "Attributions des choix",
     "trades": "Échanges de choix",
-    "lottery": "Loterie",
-    "lottery_result": "Résultat de la loterie",
 }
 MAIN_CHANNELS = ("list", "picks", "board", "round1", "round2")
 EXTRA_CHANNELS = ("guide", "recap", "owners", "trades")
-LOTTERY_CHANNELS = ("lottery", "lottery_result")
 CHANNEL_HELP = {
     "list": "Le bot y affiche les joueurs disponibles.",
     "picks": "Les choix y sont annoncés (sauf si une ronde a son propre salon).",
@@ -1570,8 +1564,6 @@ CHANNEL_HELP = {
     "recap": "Facultatif. Les choix de chaque équipe, mis à jour tout seuls.",
     "owners": "Facultatif. Qui possède quel choix, ronde par ronde.",
     "trades": "Facultatif. Les échanges de choix y sont annoncés.",
-    "lottery": "Le bot y fait tourner la roue de la loterie.",
-    "lottery_result": "Facultatif. L'ordre final y est publié (sinon : salon de la loterie).",
 }
 
 
@@ -1642,16 +1634,13 @@ class PlayersModal(BotModal):
 
 
 class OrderModal(BotModal):
-    def __init__(self, bot: DraftBot, lottery_order: list[str] | None = None):
+    def __init__(self, bot: DraftBot):
         super().__init__(bot, "Ordre du draft")
-        # Après une loterie, son résultat est déjà écrit : l'admin ajoute les autres équipes au besoin.
         self.teams = self.ask(
             "Équipes, dans l'ordre de la 1re ronde",
             discord.ui.TextInput(style=discord.TextStyle.paragraph, max_length=4000,
-                                 placeholder="Laval\nGranby\nMontréal",
-                                 default="\n".join(lottery_order)[:4000] if lottery_order else None),
-            "Résultat de la loterie déjà écrit : ajoute les autres équipes au besoin." if lottery_order
-            else "Une équipe par ligne (ou séparées par des virgules), au nom exact de son rôle.")
+                                 placeholder="Laval\nGranby\nMontréal"),
+            "Une équipe par ligne (ou séparées par des virgules), au nom exact de son rôle.")
         self.rounds = self.ask(
             "Nombre de rondes", discord.ui.TextInput(default="1", max_length=2),
             "Choix échangés ? Écris tous les choix dans l'ordre, puis mets 1 ronde.")
@@ -1697,30 +1686,6 @@ class TradeModal(BotModal):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await trade_pick(self.bot, interaction, text_value(self.number), self.team.values[0])
-
-
-class LotteryModal(BotModal):
-    """La loterie : les équipes avec leurs chances, le nombre de choix tirés et ses salons."""
-
-    def __init__(self, bot: DraftBot, current: dict[str, int | None]):
-        super().__init__(bot, "Loterie du repêchage")
-        self.teams = self.ask(
-            "Équipes et chances, de la pire à la meilleure",
-            discord.ui.TextInput(style=discord.TextStyle.paragraph, max_length=2000,
-                                 placeholder="San Jose 18,5\nWinnipeg 13,5\nQuébec 11,5"),
-            "Une équipe par ligne : son nom (comme son rôle), puis ses chances en %.")
-        self.draws = self.ask("Nombre de choix tirés au sort", discord.ui.TextInput(default="2", max_length=2),
-                              "Ex. : 2 (comme la LNH). Les autres équipes gardent leur rang.")
-        self.lottery_channel = self.ask(CHANNEL_NAMES["lottery"], channel_select(current.get("lottery"), True),
-                                        CHANNEL_HELP["lottery"])
-        self.result_channel = self.ask(CHANNEL_NAMES["lottery_result"],
-                                       channel_select(current.get("lottery_result"), False),
-                                       CHANNEL_HELP["lottery_result"])
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        chosen = chosen_channels(interaction.guild, {"lottery": self.lottery_channel,
-                                                     "lottery_result": self.result_channel})
-        await run_lottery(self.bot, interaction, text_value(self.teams), text_value(self.draws), chosen)
 
 
 # Les actions des admins. Chaque changement est confirmé, noté au journal et suivi d'un panneau à jour.
@@ -1799,9 +1764,6 @@ def channel_words(name: str) -> str:
 
 
 GUESS_RULES = [
-    ("lottery_result", lambda w: any(x in w for x in (" resultat", " result")) and any(
-        x in w for x in ("loterie", "lottery"))),
-    ("lottery", lambda w: "loterie" in w or "lottery" in w),
     ("round1", lambda w: re.search(r" (ronde 1|1re ronde|1ere ronde|premiere ronde|round 1|1st round|first round) ", w)),
     ("round2", lambda w: re.search(r" (ronde 2|2e ronde|2eme ronde|deuxieme ronde|round 2|2nd round|second round) ", w)),
     ("list", lambda w: re.search(r" (listes?|list|disponibles?) ", w)),
@@ -1815,7 +1777,7 @@ GUESS_RULES = [
 
 
 def guess_channels(guild: discord.Guild) -> dict[str, discord.TextChannel]:
-    """Le salon qui correspond à chaque rôle d'après son nom (« ronde-1 », « loterie »…).
+    """Le salon qui correspond à chaque rôle d'après son nom (« ronde-1 », « fonctionnement »…).
 
     Si le serveur a une catégorie « Repêchage » ou « Draft », seuls ses salons sont regardés.
     Un salon ne sert qu'à un seul rôle."""
@@ -1861,102 +1823,6 @@ async def autofill_channels(bot: DraftBot, interaction: discord.Interaction) -> 
     if not_found:
         text += "\n\nPas trouvés (ils ne changent pas) : " + ", ".join(not_found) + "."
     await ask_confirmation(interaction, text + "\n\nC'est bon ?", confirmed)
-
-
-# La loterie : le résultat est tiré et noté au journal AVANT l'animation : il ne peut plus changer.
-
-async def run_lottery(bot: DraftBot, interaction: discord.Interaction, teams_text: str, draws_text: str,
-                      chosen: dict) -> None:
-    guild = interaction.guild
-    try:
-        entries = lottery.parse_entries(teams_text)
-        draws = lottery.parse_draws(draws_text, len(entries))
-    except lottery.LotteryError as error:
-        await reply(interaction, f"❌ {error}\nRéessaie : `/admin`, **{DRAFT_BUTTON}**, **{MORE_OPTIONS}**, **Loterie**.")
-        return
-    channel, result_channel = chosen.get("lottery"), chosen.get("lottery_result")
-    if channel is None or channel is MISSING_CHANNEL or result_channel is MISSING_CHANNEL:
-        await reply(interaction, "Salon introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
-        return
-    blocked = [c.mention for c in (channel, result_channel) if c is not None and not bot_can_post(c, guild)]
-    if blocked:
-        await reply(interaction, "🔒 Le bot ne peut pas écrire dans : " + ", ".join(dict.fromkeys(blocked))
-                    + ". Corrige ses permissions puis recommence.")
-        return
-    total = sum(chance for _, chance in entries)
-    lines = [f"• {escape_markdown(team)} : {lottery.percent(100 * chance / total)} %" for team, chance in entries]
-    missing = [team for team, _ in entries if bot.team_role(guild, team) is None]
-    question = (f"🎰 Faire la loterie maintenant dans {channel.mention} ? On tire **{draws} choix** "
-                f"parmi {len(entries)} équipes :\n" + "\n".join(lines))
-    if abs(total - 100) > 0.5:
-        question += f"\nℹ️ Les chances donnent {lottery.percent(total)} % en tout : le bot les ramène à 100 %."
-    if missing:
-        question += ("\n⚠️ Aucun rôle Discord ne porte le nom de : " + ", ".join(escape_markdown(t) for t in missing)
-                     + ". Vérifie l'orthographe : ce nom ira tel quel dans l'ordre du draft.")
-
-    async def confirmed(button_interaction: discord.Interaction) -> None:
-        if guild.id in bot.lotteries:
-            await reply(button_interaction, "Une loterie est déjà en cours sur ce serveur. Attends qu'elle finisse.")
-            return
-        bot.lotteries.add(guild.id)
-        try:
-            await draw_lottery(bot, button_interaction, entries, draws, channel, result_channel)
-        finally:
-            bot.lotteries.discard(guild.id)
-
-    await ask_confirmation(interaction, question, confirmed)
-
-
-async def draw_lottery(bot: DraftBot, interaction: discord.Interaction, entries: list[tuple[str, float]],
-                       draws: int, channel: discord.TextChannel, result_channel: discord.TextChannel | None) -> None:
-    guild, store = interaction.guild, bot.store
-    title = "Loterie du repêchage"
-    winners = lottery.draw(entries, draws)
-    order = lottery.final_order(entries, winners)
-    store.set_draft_channels(guild.id, {"lottery": channel.id,
-                                        "lottery_result": result_channel.id if result_channel else None})
-    store.set_lottery_order(guild.id, order)
-    store.add_log(guild.id, interaction.user.id, "loterie", lottery.log_details(entries, order))
-    await reply(interaction, f"🎰 La loterie commence dans {channel.mention} ! Le résultat est déjà tiré "
-                "et noté au journal : il ne peut plus changer.")
-    try:
-        await channel.send(lottery.opening_message(title, entries, draws), allowed_mentions=NO_PINGS)
-        left = list(range(len(entries)))
-        for rank, winner in enumerate(winners, start=1):
-            await show_draw(bot, guild, channel, entries, left, winner, rank)
-            left.remove(winner)
-        target = result_channel or channel
-        await target.send(lottery.result_message(title, entries, order), allowed_mentions=NO_PINGS)
-    except discord.HTTPException:
-        log.exception("Loterie interrompue sur le serveur %s", guild.id)
-        await reply(interaction, "⚠️ Discord a refusé un message de la loterie. Le résultat est quand même gardé : "
-                    "ordre " + ", ".join(order) + ". Vérifie les permissions du bot (écrire, joindre des fichiers).")
-        return
-    await reply(interaction, "✅ Loterie terminée ! L'ordre est prêt : `/admin`, **Draft**, "
-                f"**{MORE_OPTIONS}**, **Changer l'ordre** (il est déjà écrit dedans, ajoute les autres équipes au besoin).")
-
-
-async def show_draw(bot: DraftBot, guild: discord.Guild, channel: discord.TextChannel, entries: list[tuple[str, float]],
-                    left: list[int], winner: int, rank: int) -> None:
-    """Un tirage : la roue tourne (parts selon les chances des équipes qui restent), puis le gagnant."""
-    names = [entries[i][0] for i in left]
-    weights = [entries[i][1] for i in left]
-    suspense = WHEEL_SUSPENSE
-    files = []
-    if bot_can_attach(channel, guild):
-        try:
-            gif = await asyncio.to_thread(wheel.render_gif, names, left.index(winner), weights=weights)
-            files = [discord.File(io.BytesIO(gif), filename="loterie.gif")]
-            suspense = max(suspense, wheel.spin_seconds() + WHEEL_SUSPENSE_AFTER_GIF)
-        except Exception:
-            # Sans image, la loterie marche quand même : le résultat en texte.
-            log.exception("Roue de la loterie impossible, résultat en texte seulement")
-    kwargs = {"file": files[0]} if files else {}
-    await channel.send(lottery.spinning_message(entries, left, rank), allowed_mentions=NO_PINGS, **kwargs)
-    await asyncio.sleep(suspense)
-    team = entries[winner][0]
-    role = bot.team_role(guild, team)
-    await channel.send(lottery.winner_message(team, role.mention if role else "", rank), allowed_mentions=PINGS)
 
 
 async def import_players(bot: DraftBot, interaction: discord.Interaction, fichier: discord.Attachment) -> None:
@@ -2034,8 +1900,6 @@ async def define_order(bot: DraftBot, interaction: discord.Interaction, teams_te
             per_round = store.set_order(guild_id, order)
             store.add_log(guild_id, interaction.user.id, "ordre",
                           f"{len(order)} choix : " + ", ".join(team_display(t) for t in order))
-            # L'ordre de la loterie a servi : il n'est plus proposé.
-            store.set_lottery_order(guild_id, None)
             channels = bot.channels(interaction.guild)
             if channels and store.list_messages(guild_id):
                 await bot.refresh_list(guild_id, channels[0])
@@ -2611,7 +2475,6 @@ class AdminPanel(discord.ui.View):
             self.add("delai", "Délai par choix", self.open_delay, emoji="⌛", row=1)
             self.add("echange", "Échanger un choix", self.open_trade, emoji="🔁", row=1)
             self.add("journal", "Journal", self.journal, emoji="📒", row=1)
-            self.add("loterie", "Loterie", self.open_lottery, emoji="🎰", row=2)
             self.add("retour", "Retour", self.show_draft, style=primary, emoji="⬅️", row=2)
             return panel_text(self.bot, guild, OPTIONS_SCREEN)
         if self.screen == SALONS_SCREEN:
@@ -2693,9 +2556,6 @@ class AdminPanel(discord.ui.View):
     async def autofill(self, interaction: discord.Interaction) -> None:
         await autofill_channels(self.bot, interaction)
 
-    async def open_lottery(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(LotteryModal(self.bot, self.bot.store.draft_channels(interaction.guild_id)))
-
     async def open_players(self, interaction: discord.Interaction) -> None:
         if not self.bot.channels(interaction.guild):
             await reply(interaction, f"Choisis d'abord les salons du draft : **{MORE_OPTIONS}**, puis **{CHANGE_CHANNELS}**.")
@@ -2703,7 +2563,7 @@ class AdminPanel(discord.ui.View):
         await interaction.response.send_modal(PlayersModal(self.bot))
 
     async def open_order(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(OrderModal(self.bot, self.bot.store.lottery_order(interaction.guild_id)))
+        await interaction.response.send_modal(OrderModal(self.bot))
 
     async def open_delay(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(DelayModal(self.bot, *self.bot.store.timer(interaction.guild_id)))
@@ -2747,7 +2607,7 @@ ADMIN_HELP = """
 🛠️ **Admins** : `/admin` ouvre le panneau de la ligue, avec deux boutons :
 • **Draft** : un seul bouton à la fois, clique dessus pour passer à l'étape suivante, jusqu'à \
 **▶ Lancer le draft**. Pendant le draft : **Choisir pour l'équipe au tour** et **Annuler le dernier choix**. \
-Tout le reste (échanger un choix, délai, journal, loterie, changer les salons, les joueurs ou l'ordre) est \
+Tout le reste (échanger un choix, délai, journal, changer les salons, les joueurs ou l'ordre) est \
 dans **Plus d'options**. Dans **Changer les salons**, chaque salon du repêchage a son rôle (sélection des \
 joueurs, ronde 1, ronde 2, guide, centrale, attributions, échanges) ; **Remplir automatiquement** les trouve \
 d'après leur nom.

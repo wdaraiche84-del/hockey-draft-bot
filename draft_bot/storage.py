@@ -113,10 +113,6 @@ CONFIG_COLUMNS = {
     "draft_recap_channel_id": "INTEGER",
     "draft_owners_channel_id": "INTEGER",
     "draft_trades_channel_id": "INTEGER",
-    "draft_lottery_channel_id": "INTEGER",
-    "draft_lottery_result_channel_id": "INTEGER",
-    # L'ordre sorti de la dernière loterie (JSON), proposé dans « Changer l'ordre » jusqu'à ce qu'il serve.
-    "lottery_order": "TEXT",
 }
 
 # Colonnes ajoutées à la table des choix.
@@ -129,7 +125,7 @@ PICK_COLUMNS = {
 
 # Les salons facultatifs du repêchage. Chaque ligue choisit les siens dans /admin ; sans salon, la
 # fonction n'est pas utilisée et tout se passe comme avant (dans le salon des annonces).
-DRAFT_CHANNELS = ("board", "round1", "round2", "guide", "recap", "owners", "trades", "lottery", "lottery_result")
+DRAFT_CHANNELS = ("board", "round1", "round2", "guide", "recap", "owners", "trades")
 
 # Les sortes d'annonces SHM, chacune dans son propre salon si on veut.
 SHM_KINDS = ("trades", "waivers", "buyouts", "standings")
@@ -254,16 +250,6 @@ class Store:
             for key, channel_id in channels.items():
                 self.db.execute(f"UPDATE config SET draft_{key}_channel_id = ? WHERE guild_id = ?",
                                 (channel_id, guild_id))
-
-    def lottery_order(self, guild_id: int) -> list[str]:
-        row = self.db.execute("SELECT lottery_order FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
-        return json.loads(row[0]) if row and row[0] else []
-
-    def set_lottery_order(self, guild_id: int, teams: list[str] | None) -> None:
-        with self.db:
-            self.db.execute("INSERT OR IGNORE INTO config (guild_id) VALUES (?)", (guild_id,))
-            self.db.execute("UPDATE config SET lottery_order = ? WHERE guild_id = ?",
-                            (json.dumps(teams, ensure_ascii=False) if teams else None, guild_id))
 
     # Joueurs
 

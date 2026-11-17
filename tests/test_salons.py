@@ -8,9 +8,7 @@ import pytest
 
 import draft_bot.bot as bot_module
 from draft_bot import formatting as fmt
-from draft_bot import lottery, wheel
-from draft_bot.bot import (ChannelsModal, ExtraChannelsModal, LotteryModal, OrderModal, PickButtonView,
-                           guess_channels)
+from draft_bot.bot import ChannelsModal, ExtraChannelsModal, OrderModal, guess_channels
 from draft_bot.storage import Store
 
 from test_bot import (FakeChannel, FakeGuild, FakeInteraction, FakeMember, FakeRole, admin_of, button,
@@ -20,9 +18,6 @@ from test_bot import (FakeChannel, FakeGuild, FakeInteraction, FakeMember, FakeR
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     monkeypatch.setattr(bot_module, "PICK_REPLY_SECONDS", 0)
-    monkeypatch.setattr(bot_module, "WHEEL_SUSPENSE", 0)
-    monkeypatch.setattr(bot_module, "WHEEL_SUSPENSE_AFTER_GIF", 0)
-    monkeypatch.setattr(wheel, "spin_seconds", lambda: 0)
 
 
 class Category:
@@ -72,7 +67,7 @@ def test_guess_finds_williams_channels(salons):
     assert found == {
         "list": "liste-des-joueurs", "board": "sélection-des-joueurs", "round1": "ronde-1", "round2": "ronde-2",
         "guide": "fonctionnement", "recap": "centrale-de-repêchage", "owners": "attributions-picks",
-        "trades": "trade-durant-le-repêchage", "lottery": "loterie", "lottery_result": "résultat-de-la-loterie",
+        "trades": "trade-durant-le-repêchage",
         # Pas de salon « annonces » à part : les annonces vont dans la ronde 1.
         "picks": "ronde-1",
     }
@@ -83,7 +78,7 @@ def test_guess_ignores_other_categories_and_other_spellings():
     channels = [FakeChannel(n) for n in names]
     for c in channels:
         c.category = Category("Draft 2026")
-    outside = FakeChannel("loterie")  # hors de la catégorie du draft : ignoré
+    outside = FakeChannel("liste-autre")  # hors de la catégorie du draft : ignoré
     outside.category = Category("Général")
     guild = FakeGuild([], [*channels, outside])
     found = {k: c.name for k, c in guess_channels(guild).items()}
@@ -512,174 +507,6 @@ def test_failing_extra_channel_never_blocks_a_pick(salons):
     assert "Mario Lemieux" in ch["ronde-1"].texts()[-1]
 
 
-# La loterie
-
-def test_lottery_lines_are_read_in_many_ways():
-    entries = lottery.parse_entries("San Jose 18,5\nWinnipeg ; 13.5 %\n\nQuébec: 11\nTeam 2 10")
-    assert entries == [("San Jose", 18.5), ("Winnipeg", 13.5), ("Québec", 11.0), ("Team 2", 10.0)]
-    for bad, message in (("San Jose", "comprends pas"), ("A 10\na 5", "deux fois"), ("A 10", "au moins deux"),
-                         ("A 0\nB 5", "0 chance")):
-        with pytest.raises(lottery.LotteryError, match=message):
-            lottery.parse_entries(bad)
-    assert lottery.parse_draws("2", 4) == 2
-    for bad in ("0", "4", "deux", ""):
-        with pytest.raises(lottery.LotteryError):
-            lottery.parse_draws(bad, 4)
-
-
-class FixedRandom:
-    def __init__(self, *values):
-        self.values = list(values)
-
-    def random(self):
-        return self.values.pop(0)
-
-
-def test_lottery_draw_respects_chances_without_replacement():
-    entries = [("A", 50), ("B", 30), ("C", 20)]
-    # 1er tirage : 0,9 × 100 = 90 → C (après 50 + 30). 2e : sur A + B = 80, 0,1 × 80 = 8 → A.
-    winners = lottery.draw(entries, 2, FixedRandom(0.9, 0.1))
-    assert winners == [2, 0]
-    assert lottery.final_order(entries, winners) == ["C", "A", "B"]
-    result = lottery.result_message("Loterie", entries, ["C", "A", "B"])
-    assert "1. C ⬆️ +2" in result and "2. A ⬇️ -1" in result and "3. B ⬇️ -1" in result
-
-
-def test_lottery_is_fair_over_many_draws():
-    import random
-    rng = random.Random(4)
-    entries = [("A", 60), ("B", 30), ("C", 10)]
-    counts = {0: 0, 1: 0, 2: 0}
-    for _ in range(6000):
-        counts[lottery.draw(entries, 1, rng)[0]] += 1
-    assert abs(counts[0] / 6000 - 0.6) < 0.03 and abs(counts[2] / 6000 - 0.1) < 0.02
-
-
-def test_weighted_wheel_stops_on_the_winner():
-    import random
-    rng = random.Random(1)
-    weights = [18.5, 13.5, 11.5, 0.5, 56]
-    for winner in range(len(weights)):
-        for _ in range(20):
-            angle = wheel.final_angle(len(weights), winner, rng, weights)
-            assert wheel.winner_under_pointer(len(weights), angle, weights) == winner
-    # Sans « weights », la roue de /roue ne change pas.
-    assert wheel.winner_under_pointer(4, wheel.final_angle(4, 2, rng)) == 2
-
-
-def test_weighted_wheel_draws_a_gif():
-    gif = wheel.render_gif(["San Jose", "Winnipeg", "Minuscule"], 2, weights=[60, 39.5, 0.5])
-    assert gif[:6] == b"GIF89a"
-
-
-def test_lottery_from_the_panel(salons):
-    bot, store, guild, ch, _, _ = salons
-    use(store, guild, ch)
-    store.set_order(guild.id, ["laval", "granby"])
-    ch["loterie"].attach_files = True
-
-    async def scenario():
-        admin = admin_of(guild)
-        modal = LotteryModal(bot, store.draft_channels(guild.id))
-        fill(modal, teams="Laval 60\nGranby 30\nQuébec 10", draws="2")
-        modal.lottery_channel._values = [ch["loterie"]]
-        modal.result_channel._values = [ch["résultat-de-la-loterie"]]
-        i = FakeInteraction(guild, admin)
-        await modal.on_submit(i)
-        assert "Faire la loterie" in i.last and "Laval : 60 %" in i.last
-        assert "Québec" in i.last and "Aucun rôle" in i.last  # pas de rôle « Québec »
-        await confirm(i)
-        return i
-    i = run(scenario())
-    assert "Loterie terminée" in i.last
-    texts = ch["loterie"].texts()
-    assert "2 premiers choix" in texts[0]
-    assert sum("La roue tourne" in t for t in texts) == 2 and sum("obtient le" in t for t in texts) == 2
-    assert any(m.file is not None for m in ch["loterie"].messages.values())
-    result = ch["résultat-de-la-loterie"].texts()
-    assert len(result) == 1 and "Résultat" in result[0]
-    order = store.lottery_order(guild.id)
-    assert sorted(order) == ["Granby", "Laval", "Québec"]
-    assert store.draft_channels(guild.id)["lottery"] == ch["loterie"].id
-    # Le journal garde le résultat ; « Changer l'ordre » le propose déjà écrit.
-    assert any(action == "loterie" for _, _, action, _ in store.log_entries(guild.id))
-    modal = OrderModal(bot, store.lottery_order(guild.id))
-    assert modal.teams.default == "\n".join(order)
-
-
-def test_lottery_order_is_offered_until_used(salons):
-    bot, store, guild, ch, _, _ = salons
-    use(store, guild, ch)
-    store.set_lottery_order(guild.id, ["Granby", "Laval"])
-    admin = admin_of(guild)
-
-    async def scenario():
-        panel = (await open_panel(bot, guild, admin)).view
-        await click(panel, button(panel, "options"), FakeInteraction(guild, admin))
-        i = await click(panel, button(panel, "ordre"), FakeInteraction(guild, admin))
-        modal = i.response.modal
-        assert modal.teams.default == "Granby\nLaval"
-        done = FakeInteraction(guild, admin)
-        await fill(modal, teams="Granby\nLaval", rounds="2", snake=["non"]).on_submit(done)
-        await confirm(done)
-    run(scenario())
-    assert store.lottery_order(guild.id) == []
-    assert OrderModal(bot, store.lottery_order(guild.id)).teams.default is None
-
-
-def test_lottery_without_files_permission_is_text_only(salons):
-    bot, store, guild, ch, _, _ = salons
-    use(store, guild, ch)
-
-    async def scenario():
-        modal = LotteryModal(bot, {})
-        fill(modal, teams="Laval 70\nGranby 30", draws="1")
-        modal.lottery_channel._values = [ch["loterie"]]
-        modal.result_channel._values = []
-        i = FakeInteraction(guild, admin_of(guild))
-        await modal.on_submit(i)
-        await confirm(i)
-        return i
-    i = run(scenario())
-    assert "Loterie terminée" in i.last
-    assert all(m.file is None for m in ch["loterie"].messages.values())
-    # Sans salon de résultat, le résultat va dans le salon de la loterie.
-    assert "Résultat" in ch["loterie"].texts()[-1]
-
-
-def test_two_lotteries_at_once_are_refused(salons):
-    bot, store, guild, ch, _, _ = salons
-    use(store, guild, ch)
-    bot.lotteries.add(guild.id)
-
-    async def scenario():
-        modal = LotteryModal(bot, {})
-        fill(modal, teams="Laval 70\nGranby 30", draws="1")
-        modal.lottery_channel._values = [ch["loterie"]]
-        modal.result_channel._values = []
-        i = FakeInteraction(guild, admin_of(guild))
-        await modal.on_submit(i)
-        await confirm(i)
-        return i
-    i = run(scenario())
-    assert "déjà en cours" in i.last and ch["loterie"].texts() == []
-
-
-def test_bad_lottery_explains(salons):
-    bot, store, guild, ch, _, _ = salons
-
-    async def scenario():
-        modal = LotteryModal(bot, {})
-        fill(modal, teams="Laval\nGranby 30", draws="1")
-        modal.lottery_channel._values = [ch["loterie"]]
-        modal.result_channel._values = []
-        i = FakeInteraction(guild, admin_of(guild))
-        await modal.on_submit(i)
-        return i
-    i = run(scenario())
-    assert "❌" in i.last and "Loterie" in i.last and i.view is None
-
-
 # La base de données d'avant cette mise à jour
 
 def test_old_database_is_upgraded(tmp_path):
@@ -700,4 +527,4 @@ def test_old_database_is_upgraded(tmp_path):
     assert store.draft_channels(1) == {k: None for k in store.draft_channels(1)}
     pick_ = store.get_pick(1, 1)
     assert pick_.team == "Laval" and pick_.via is None and pick_.message_channel_id is None
-    assert store.button_channel(1) is None and store.lottery_order(1) == []
+    assert store.button_channel(1) is None

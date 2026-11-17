@@ -100,51 +100,29 @@ def short_label(label: str, count: int) -> str:
     return label if len(label) <= room else label[:room - 1] + "…"
 
 
-def slice_bounds(count: int, weights: list[float] | None = None) -> list[tuple[float, float]]:
-    """(début, fin) en degrés de chaque part, depuis le haut dans le sens horaire. Sans « weights »,
-    toutes les parts sont égales ; avec, chaque part est proportionnelle à ses chances (la loterie)."""
-    weights = weights or [1.0] * count
-    total = sum(weights)
-    bounds, start = [], 0.0
-    for w in weights:
-        end = start + 360 * w / total
-        bounds.append((start, end))
-        start = end
-    return bounds
-
-
-def final_angle(count: int, winner_index: int, rng=_random, weights: list[float] | None = None) -> float:
+def final_angle(count: int, winner_index: int, rng=_random) -> float:
     """De combien de degrés (sens horaire) la roue tourne pour finir avec le gagnant sous la flèche.
 
     La part i va de i × part à (i+1) × part, comptée depuis le haut dans le sens horaire. On s'arrête
     à un endroit au hasard dans la part du gagnant, jamais tout près d'un bord (pas d'hésitation).
     """
-    start, end = slice_bounds(count, weights)[winner_index]
-    target = start + (end - start) * (0.15 + 0.7 * rng.random())
+    part = 360 / count
+    target = winner_index * part + part * (0.15 + 0.7 * rng.random())
     return TURNS * 360 + (360 - target) % 360
 
 
-def winner_under_pointer(count: int, angle: float, weights: list[float] | None = None) -> int:
+def winner_under_pointer(count: int, angle: float) -> int:
     """Quelle part est sous la flèche (en haut) après avoir tourné de « angle » degrés."""
-    point = (360 - angle % 360) % 360
-    for i, (start, end) in enumerate(slice_bounds(count, weights)):
-        if start <= point < end:
-            return i
-    return count - 1
+    part = 360 / count
+    return int(((360 - angle % 360) % 360) // part) % count
 
 
 def _ease_out(t: float) -> float:
     return 1 - (1 - t) ** 3
 
 
-# Une part plus petite que ça (en degrés) n'a pas de nom écrit dessus : il ne serait pas lisible.
-MIN_LABEL_DEGREES = 9
-
-
-def render_gif(options: list[str], winner_index: int, rng=_random, weights: list[float] | None = None) -> bytes:
-    """La roue qui tourne une fois et s'arrête sur options[winner_index], en GIF qui ne boucle pas.
-
-    Avec « weights » (la loterie), chaque part est proportionnelle aux chances de l'option."""
+def render_gif(options: list[str], winner_index: int, rng=_random) -> bytes:
+    """La roue qui tourne une fois et s'arrête sur options[winner_index], en GIF qui ne boucle pas."""
     import io
     import math
 
@@ -155,27 +133,25 @@ def render_gif(options: list[str], winner_index: int, rng=_random, weights: list
     scale = 2  # dessinée en grand puis réduite : bords plus lisses
     big, c = size * scale, size * scale / 2
     radius = c - 20 * scale
-    bounds = slice_bounds(count, weights)
-    labelled = [i for i, (start, end) in enumerate(bounds) if end - start >= MIN_LABEL_DEGREES] or [winner_index]
-    part = min(bounds[i][1] - bounds[i][0] for i in labelled)
+    part = 360 / count
 
     wheel = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     draw = ImageDraw.Draw(wheel)
     labels = [short_label(label, count) for label in options]
     # Le plus gros texte qui tient : assez court pour la longueur de la part, assez mince pour sa largeur.
-    arc = 2 * math.pi * radius * 0.60 * part / 360
+    arc = 2 * math.pi * radius * 0.60 / count
     points = 26 * scale
     while points > 9 * scale:
         font = ImageFont.truetype(str(FONT), points)
-        if max(font.getlength(labels[i]) for i in labelled) <= radius * 0.66 and points <= arc * 0.75:
+        if max(font.getlength(t) for t in labels) <= radius * 0.66 and points <= arc * 0.75:
             break
         points -= scale
     for i, color in enumerate(slice_colors(count)):
-        start, end = bounds[i]
-        draw.pieslice([c - radius, c - radius, c + radius, c + radius], start - 90, end - 90,
+        start = -90 + i * part
+        draw.pieslice([c - radius, c - radius, c + radius, c + radius], start, start + part,
                       fill=color, outline="white", width=2 * scale)
-    for i in labelled:
-        middle = (bounds[i][0] + bounds[i][1]) / 2  # depuis midi, sens horaire
+    for i in range(count):
+        middle = (i + 0.5) * part  # depuis midi, sens horaire
         layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         # Le texte est écrit à l'horizontale à droite du centre, puis tourné sur sa part.
         # Comme sur une vraie roue, chaque texte se lit du centre vers le bord.
@@ -205,7 +181,7 @@ def render_gif(options: list[str], winner_index: int, rng=_random, weights: list
             d.text((h, size + BANNER / 2 - 1), text, font=winner_font, fill="#1e1f22", anchor="mm")
         return frame.convert("RGB")
 
-    total = final_angle(count, winner_index, rng, weights)
+    total = final_angle(count, winner_index, rng)
     frames = [frame_at(total * _ease_out(n / SPIN_FRAMES), False) for n in range(SPIN_FRAMES)]
     frames.append(frame_at(total, True))
     # Une seule palette pour toutes les images : couleurs stables, fichier plus léger.
