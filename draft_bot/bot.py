@@ -5,6 +5,7 @@ import csv
 import io
 import logging
 import os
+import re
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -19,11 +20,12 @@ from dotenv import load_dotenv
 
 from . import transactions
 from . import formatting as fmt
+from . import lottery
 from . import moves
 from . import shm
 from . import trade_card
 from . import wheel
-from .storage import AlreadyRunning, Pick, PickError, Player, Store, normalize, team_display
+from .storage import DRAFT_CHANNELS, AlreadyRunning, Pick, PickError, Player, Store, normalize, team_display
 
 log = logging.getLogger("draft_bot")
 
@@ -153,6 +155,8 @@ class DraftBot(discord.Client):
         self.sync_lock = asyncio.Lock()
         # Les panneaux /admin ouverts, par serveur, pour les mettre à jour après chaque changement.
         self.panels: defaultdict[int, set[AdminPanel]] = defaultdict(set)
+        # Les serveurs où une loterie est en train d'être tirée (une seule à la fois).
+        self.lotteries: set[int] = set()
         register_commands(self)
 
     async def setup_hook(self) -> None:
@@ -380,59 +384,239 @@ class DraftBot(discord.Client):
         ping = role.mention if role else "(aucun rôle à ce nom)"
         return fmt.on_the_clock(pick, ping, self.store.deadline(guild.id))
 
+    def draft_channel(self, guild: discord.Guild, key: str) -> discord.TextChannel | None:
+        """Un salon facultatif du repêchage (voir DRAFT_CHANNELS), ou None s'il n'est pas choisi ou introuvable."""
+        channel_id = self.store.draft_channels(guild.id).get(key)
+        return guild.get_channel(channel_id) if channel_id else None
+
+    def announce_channel(self, guild: discord.Guild, round_number: int) -> discord.TextChannel | None:
+        """Le salon où annoncer un choix de cette ronde : celui de la ronde s'il y en a un, sinon les annonces."""
+        own = self.draft_channel(guild, "round1" if round_number <= 1 else "round2")
+        if own is not None:
+            return own
+        channels = self.channels(guild)
+        return channels[1] if channels else None
+
+    def notice_channel(self, guild: discord.Guild) -> discord.TextChannel | None:
+        """Le salon des avis du draft (début, délai) : la sélection des joueurs s'il y en a une, sinon les annonces."""
+        board = self.draft_channel(guild, "board")
+        if board is not None:
+            return board
+        channels = self.channels(guild)
+        return channels[1] if channels else None
+
+    async def take_button(self, guild: discord.Guild, message_id: int | None, channel_id: int | None = None) -> None:
+        """Le bouton « Faire mon choix » est maintenant sur ce message (ou nulle part) : on le retire
+        de l'ancien message. Un seul bouton reste en vue, celui du choix en cours."""
+        old, old_channel = self.store.button_message(guild.id), self.store.button_channel(guild.id)
+        self.store.set_button_message(guild.id, message_id, channel_id)
+        if not old or old == message_id:
+            return
+        channel = guild.get_channel(old_channel) if old_channel else None
+        if channel is None:
+            channels = self.channels(guild)
+            channel = channels[1] if channels else None
+        if channel is None:
+            return
+        try:
+            await channel.get_partial_message(old).edit(view=None)
+        except discord.HTTPException:
+            # Message effacé ou dans un ancien salon : un clic sur un vieux bouton est de toute façon refusé.
+            pass
+
     async def post_with_clock(self, guild: discord.Guild, channel: discord.TextChannel, text: str) -> discord.Message:
         """Publie un message suivi de « Au tour de … ».
 
         Pendant le draft, ce message porte le bouton « Faire mon choix ». Le bouton est retiré
         du message précédent : un seul bouton reste en vue, celui du choix en cours.
         """
-        text += "\n" + self.on_the_clock(guild)
+        text = (text + "\n" if text else "") + self.on_the_clock(guild)
         has_button = self.store.current_pick(guild.id) is not None
         if has_button:
             message = await channel.send(text, allowed_mentions=PINGS, view=PickButtonView(self))
         else:
             message = await channel.send(text, allowed_mentions=PINGS)
-        old = self.store.button_message(guild.id)
-        self.store.set_button_message(guild.id, message.id if has_button else None)
-        if old and old != message.id:
-            try:
-                await channel.get_partial_message(old).edit(view=None)
-            except discord.HTTPException:
-                # Message effacé ou dans un ancien salon : le bouton y fonctionne quand même.
-                pass
+        await self.take_button(guild, message.id if has_button else None, channel.id)
         return message
 
     async def remove_pick_button(self, guild: discord.Guild) -> None:
-        old = self.store.button_message(guild.id)
-        if not old:
-            return
-        self.store.set_button_message(guild.id, None)
-        channels = self.channels(guild)
-        if channels is None:
-            return
-        try:
-            await channels[1].get_partial_message(old).edit(view=None)
-        except discord.HTTPException:
-            # Message effacé : rien à retirer. Un clic sur un vieux bouton est de toute façon refusé.
-            pass
+        await self.take_button(guild, None)
 
-    async def announce(self, guild: discord.Guild, text: str, with_clock: bool = True) -> str:
-        """Publie un message dans le salon des sélections, en mentionnant l'équipe au tour.
+    async def publish(self, guild: discord.Guild, channel: discord.TextChannel, text: str, clock: bool,
+                      problems: list[str] | None = None) -> discord.Message:
+        """Publie un message du draft. Avec clock, l'équipe au tour est avertie :
+        - avec un salon de sélection des joueurs, le tableau y est republié (mention et bouton) ;
+        - sinon, « Au tour de … » et le bouton suivent le message, comme avant.
+        Une erreur du tableau est ajoutée à « problems » au lieu de faire échouer l'annonce."""
+        board = self.draft_channel(guild, "board")
+        if board is None:
+            if clock:
+                return await self.post_with_clock(guild, channel, text)
+            return await channel.send(text, allowed_mentions=PINGS)
+        message = await channel.send(text, allowed_mentions=PINGS)
+        try:
+            await self.refresh_board(guild, ping=clock)
+        except discord.HTTPException:
+            log.exception("Tableau du draft impossible à mettre à jour sur le serveur %s", guild.id)
+            if problems is not None:
+                problems.append(f"le tableau dans {board.mention} n'a pas pu être mis à jour")
+        return message
+
+    def players_by_id(self, guild_id: int) -> dict[int, Player]:
+        picks = self.store.all_picks(guild_id)
+        found = {}
+        for pick in picks:
+            if pick.player_id is not None and pick.player_id not in found:
+                player = self.store.get_player(guild_id, pick.player_id)
+                if player is not None:
+                    found[pick.player_id] = player
+        return found
+
+    async def refresh_board(self, guild: discord.Guild, ping: bool = False) -> None:
+        """Le tableau du draft, dans le salon de la sélection des joueurs.
+
+        Avec ping (le tour a changé), l'ancien tableau est effacé et un nouveau est publié en bas du salon :
+        l'équipe au tour est mentionnée et le bouton « Faire mon choix » est toujours le dernier message.
+        Sans ping, le tableau est seulement modifié, sans mentionner personne.
+        Sans salon de sélection, l'ancien tableau est effacé : tout revient dans le salon des annonces.
+        """
+        store = self.store
+        board = self.draft_channel(guild, "board")
+        old_channel_id, old = store.managed_messages(guild.id, "board")
+        old_channel = guild.get_channel(old_channel_id) if old_channel_id else None
+        if board is None or store.pick_count(guild.id) == 0:
+            for message_id, _ in old:
+                if old_channel is not None:
+                    await delete_message(old_channel, message_id)
+            store.set_managed_messages(guild.id, "board", None, [])
+            if board is not None or old:
+                await self.take_button_back(guild, old)
+            return
+        current = store.current_pick(guild.id)
+        text = fmt.board(store.all_picks(guild.id), self.players_by_id(guild.id), store.is_started(guild.id),
+                         self.on_the_clock(guild))
+        view = PickButtonView(self) if current is not None else None
+        same_place = old and old_channel is not None and old_channel.id == board.id
+        if same_place and not ping:
+            message_id = old[0][0]
+            try:
+                await board.get_partial_message(message_id).edit(content=text, view=view)
+                store.set_managed_messages(guild.id, "board", board.id, [(message_id, text)])
+                await self.take_button(guild, message_id if view is not None else None, board.id)
+                return
+            except discord.NotFound:
+                pass
+        message = await board.send(text, allowed_mentions=PINGS if ping else NO_PINGS,
+                                   **({"view": view} if view is not None else {}))
+        store.set_managed_messages(guild.id, "board", board.id, [(message.id, text)])
+        # L'ancien tableau va être effacé : inutile d'en retirer le bouton avant.
+        if store.button_message(guild.id) in {message_id for message_id, _ in old}:
+            store.set_button_message(guild.id, None)
+        await self.take_button(guild, message.id if view is not None else None, board.id)
+        for message_id, _ in old:
+            if old_channel is not None and message_id != message.id:
+                await delete_message(old_channel, message_id)
+
+    async def take_button_back(self, guild: discord.Guild, old_board: list) -> None:
+        """Le tableau vient d'être retiré : si le draft est en cours, le bouton revient dans le salon des annonces."""
+        board_ids = {message_id for message_id, _ in old_board}
+        if self.store.button_message(guild.id) in board_ids:
+            self.store.set_button_message(guild.id, None)
+        channels = self.channels(guild)
+        if channels and self.store.current_pick(guild.id) is not None and not self.store.button_message(guild.id):
+            await self.post_with_clock(guild, channels[1], "")
+
+    async def refresh_managed(self, guild: discord.Guild, kind: str, channel: discord.TextChannel | None,
+                              chunks: list[str], pin: bool = False) -> None:
+        """Garde à jour des messages du bot (guide, centrale, attributions) en ne modifiant que ceux qui ont changé.
+
+        Sans salon (fonction pas utilisée), les anciens messages sont effacés. Si le salon a changé,
+        les messages sont effacés de l'ancien salon et publiés dans le nouveau."""
+        store = self.store
+        old_channel_id, old = store.managed_messages(guild.id, kind)
+        if channel is None or (old_channel_id is not None and old_channel_id != channel.id):
+            old_channel = guild.get_channel(old_channel_id) if old_channel_id else None
+            for message_id, _ in old:
+                if old_channel is not None:
+                    await delete_message(old_channel, message_id)
+            store.set_managed_messages(guild.id, kind, None, [])
+            old = []
+            if channel is None:
+                return
+        new = []
+        done = False
+        try:
+            for i, chunk in enumerate(chunks):
+                if i < len(old):
+                    message_id, content = old[i]
+                    if content != chunk:
+                        try:
+                            await channel.get_partial_message(message_id).edit(content=chunk)
+                        except discord.NotFound:
+                            message_id = (await channel.send(chunk, allowed_mentions=NO_PINGS)).id
+                    new.append((message_id, chunk))
+                else:
+                    message = await channel.send(chunk, allowed_mentions=NO_PINGS)
+                    new.append((message.id, chunk))
+                    if pin and i == 0:
+                        try:
+                            await message.pin()
+                        except (discord.HTTPException, AttributeError):
+                            log.warning("Impossible d'épingler le guide sur le serveur %s", guild.id)
+            for message_id, _ in old[len(chunks):]:
+                await delete_message(channel, message_id)
+            done = True
+        finally:
+            store.set_managed_messages(guild.id, kind, channel.id, new if done else new + old[len(new):])
+
+    def guide_text(self, guild: discord.Guild) -> str:
+        channels = self.channels(guild)
+        board = self.draft_channel(guild, "board")
+        rounds = [c for c in (self.draft_channel(guild, "round1"), self.draft_channel(guild, "round2")) if c]
+        picks_mention = channels[1].mention if channels else "le salon des annonces"
+        announces = " et ".join(c.mention for c in rounds) if rounds else picks_mention
+        trades = self.draft_channel(guild, "trades")
+        return fmt.guide(board.mention if board else picks_mention,
+                         channels[0].mention if channels else "le salon de la liste",
+                         announces, trades.mention if trades else None, self.store.timer(guild.id)[0])
+
+    async def refresh_extras(self, guild: discord.Guild, guide: bool = False) -> list[str]:
+        """Met à jour la centrale et les attributions (et le guide, si demandé). Rend les problèmes à signaler :
+        une erreur ici ne doit jamais empêcher un choix d'être enregistré et annoncé."""
+        problems = []
+        picks = self.store.all_picks(guild.id)
+        players = self.players_by_id(guild.id)
+        parts = [("recap", "la centrale", lambda: fmt.recap(picks, players), False),
+                 ("owners", "les attributions des choix", lambda: fmt.owners(picks, players), False)]
+        if guide:
+            parts.append(("guide", "le guide", lambda: [self.guide_text(guild)], True))
+        for kind, name, render, pin in parts:
+            channel = self.draft_channel(guild, kind)
+            try:
+                await self.refresh_managed(guild, kind, channel, render() if channel else [], pin=pin)
+            except discord.HTTPException:
+                log.exception("Impossible de mettre à jour %s sur le serveur %s", kind, guild.id)
+                if channel is not None:
+                    problems.append(f"{name} dans {channel.mention} n'a pas pu être mis à jour")
+        return problems
+
+    async def announce(self, guild: discord.Guild, text: str, with_clock: bool = True,
+                       channel: discord.TextChannel | None = None) -> str:
+        """Publie un message dans le salon des avis du draft (ou « channel »), en avertissant l'équipe au tour.
 
         Retourne une phrase à ajouter à la réponse privée de l'admin.
         """
-        channels = self.channels(guild)
-        if channels is None:
+        target = channel or self.notice_channel(guild)
+        if self.channels(guild) is None or target is None:
             return "\n⚠️ Rien n'a été annoncé : les salons du draft sont introuvables (`/admin`, puis **Draft**, **Plus d'options**, **Changer les salons**)."
+        problems: list[str] = []
         try:
-            if with_clock:
-                await self.post_with_clock(guild, channels[1], text)
-            else:
-                await channels[1].send(text, allowed_mentions=PINGS)
+            await self.publish(guild, target, text, with_clock, problems)
         except discord.HTTPException:
             log.exception("Annonce impossible sur le serveur %s", guild.id)
-            return f"\n⚠️ L'annonce dans {channels[1].mention} a échoué. Vérifie les permissions du bot."
-        return f"\n📣 Annoncé dans {channels[1].mention}."
+            return f"\n⚠️ L'annonce dans {target.mention} a échoué. Vérifie les permissions du bot."
+        warning = "".join(f"\n⚠️ {p[0].upper() + p[1:]}." for p in problems)
+        return f"\n📣 Annoncé dans {target.mention}." + warning
 
     def register_panel(self, guild_id: int, panel: "AdminPanel") -> None:
         self.panels[guild_id].add(panel)
@@ -492,7 +676,7 @@ class DraftBot(discord.Client):
                         continue
                     _, admin_role_id = self.store.timer(guild_id)
                     admin_role = guild.get_role(admin_role_id) if admin_role_id else None
-                    await channels[1].send(
+                    await (self.notice_channel(guild) or channels[1]).send(
                         fmt.time_up(pick, admin_role.mention if admin_role else ""), allowed_mentions=PINGS
                     )
                     self.store.mark_alerted(guild_id)
@@ -1242,17 +1426,20 @@ async def finish_pick(bot: DraftBot, interaction: discord.Interaction, number: i
             team = transactions.team_for_name(name or pick.team)
             text = fmt.announcement(pick, player, forced, name,
                                     transactions.emoji_prefix(team, guild_emojis(interaction.guild)))
+            # Chaque ronde peut avoir son salon (Ronde 1, Ronde 2…), sinon le salon des annonces.
+            target = bot.announce_channel(interaction.guild, pick.round) or channels[1]
             try:
-                message = await bot.post_with_clock(interaction.guild, channels[1], text)
-                store.set_pick_message(guild_id, pick.number, message.id)
+                message = await bot.publish(interaction.guild, target, text, clock=True, problems=problems)
+                store.set_pick_message(guild_id, pick.number, message.id, target.id)
             except discord.HTTPException as error:
                 log.exception("Annonce impossible", exc_info=error)
-                problems.append(f"l'annonce dans {channels[1].mention} a échoué")
+                problems.append(f"l'annonce dans {target.mention} a échoué")
             try:
                 await bot.refresh_list(guild_id, channels[0])
             except discord.HTTPException as error:
                 log.exception("Liste impossible à mettre à jour", exc_info=error)
                 problems.append(f"la liste dans {channels[0].mention} n'a pas pu être mise à jour")
+            problems += await bot.refresh_extras(interaction.guild)
     await bot.refresh_panels(interaction.guild, interaction.user.id)
     text = f"✅ **{escape_markdown(player.name)}** repêché par **{escape_markdown(pick.team)}**."
     if problems:
@@ -1261,7 +1448,7 @@ async def finish_pick(bot: DraftBot, interaction: discord.Interaction, number: i
         await reply(interaction, text)
         return
     # Tout s'est bien passé : la réponse privée s'efface d'elle-même, pour qu'il ne reste rien à fermer.
-    await interaction.edit_original_response(content=text + f" Annoncé dans {channels[1].mention}.", view=None)
+    await interaction.edit_original_response(content=text + f" Annoncé dans {target.mention}.", view=None)
     await asyncio.sleep(PICK_REPLY_SECONDS)
     try:
         await interaction.delete_original_response()
@@ -1356,23 +1543,92 @@ class SearchModal(BotModal):
         await search_players(self.bot, interaction, text_value(self.query), self.forced)
 
 
+# Les salons du repêchage : deux obligatoires (la liste et les annonces), les autres facultatifs.
+CHANNEL_NAMES = {
+    "list": "Liste des joueurs",
+    "picks": "Annonces des choix",
+    "board": "Sélection des joueurs (tableau + bouton)",
+    "round1": "Annonces de la ronde 1",
+    "round2": "Annonces de la ronde 2 et plus",
+    "guide": "Fonctionnement (guide épinglé)",
+    "recap": "Centrale (choix de chaque équipe)",
+    "owners": "Attributions des choix",
+    "trades": "Échanges de choix",
+    "lottery": "Loterie",
+    "lottery_result": "Résultat de la loterie",
+}
+MAIN_CHANNELS = ("list", "picks", "board", "round1", "round2")
+EXTRA_CHANNELS = ("guide", "recap", "owners", "trades")
+LOTTERY_CHANNELS = ("lottery", "lottery_result")
+CHANNEL_HELP = {
+    "list": "Le bot y affiche les joueurs disponibles.",
+    "picks": "Les choix y sont annoncés (sauf si une ronde a son propre salon).",
+    "board": "Facultatif. Qui est au tour + le bouton « Faire mon choix ».",
+    "round1": "Facultatif. Les choix de la 1re ronde y sont annoncés.",
+    "round2": "Facultatif. Les choix des rondes 2 et plus y sont annoncés.",
+    "guide": "Facultatif. Un guide court, épinglé, pour les DG.",
+    "recap": "Facultatif. Les choix de chaque équipe, mis à jour tout seuls.",
+    "owners": "Facultatif. Qui possède quel choix, ronde par ronde.",
+    "trades": "Facultatif. Les échanges de choix y sont annoncés.",
+    "lottery": "Le bot y fait tourner la roue de la loterie.",
+    "lottery_result": "Facultatif. L'ordre final y est publié (sinon : salon de la loterie).",
+}
+
+
+def current_channel_ids(store: Store, guild_id: int) -> dict[str, int | None]:
+    main = store.get_channels(guild_id) or (None, None)
+    return {"list": main[0], "picks": main[1], **store.draft_channels(guild_id)}
+
+
+def channel_select(current: int | None, required: bool) -> discord.ui.ChannelSelect:
+    defaults = [discord.Object(id=current, type=discord.TextChannel)] if current else []
+    if required:
+        return discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=defaults)
+    return discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], required=False, min_values=0,
+                                    max_values=1, default_values=defaults)
+
+
 class ChannelsModal(BotModal):
-    def __init__(self, bot: DraftBot, current: tuple[int, int] | None):
+    """Les salons principaux : la liste, les annonces, la sélection des joueurs et les rondes."""
+
+    def __init__(self, bot: DraftBot, current: tuple[int, int] | None, extra: dict[str, int | None] | None = None):
         super().__init__(bot, "Salons du draft")
-        defaults = [[discord.Object(id=c, type=discord.TextChannel)] for c in current] if current else [[], []]
-        self.list_channel = self.ask(
-            "Salon de la liste des joueurs",
-            discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=defaults[0]),
-            "Le bot y affiche les joueurs disponibles.")
-        self.picks_channel = self.ask(
-            "Salon des annonces de choix",
-            discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=defaults[1]),
-            "Le bot y annonce chaque choix et l'équipe au tour.")
+        values = {"list": current[0] if current else None, "picks": current[1] if current else None, **(extra or {})}
+        self.selects = {key: self.ask(CHANNEL_NAMES[key], channel_select(values.get(key), key in ("list", "picks")),
+                                      CHANNEL_HELP[key])
+                        for key in MAIN_CHANNELS}
+        # Les noms utilisés avant : la liste et les annonces.
+        self.list_channel, self.picks_channel = self.selects["list"], self.selects["picks"]
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        guild = interaction.guild
-        await save_channels(self.bot, interaction, guild.get_channel(self.list_channel.values[0].id),
-                            guild.get_channel(self.picks_channel.values[0].id))
+        await apply_channels(self.bot, interaction, chosen_channels(interaction.guild, self.selects))
+
+
+class ExtraChannelsModal(BotModal):
+    """Les salons en plus : le guide, la centrale, les attributions et les échanges. Tous facultatifs."""
+
+    def __init__(self, bot: DraftBot, current: dict[str, int | None]):
+        super().__init__(bot, "Salons en plus (facultatifs)")
+        self.selects = {key: self.ask(CHANNEL_NAMES[key], channel_select(current.get(key), False), CHANNEL_HELP[key])
+                        for key in EXTRA_CHANNELS}
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await apply_channels(self.bot, interaction, chosen_channels(interaction.guild, self.selects))
+
+
+def chosen_channels(guild: discord.Guild, selects: dict[str, discord.ui.ChannelSelect]) -> dict:
+    """Le salon choisi dans chaque menu ; None : aucun (la fonction n'est pas utilisée).
+    MISSING : le salon choisi est introuvable (le bot ne le voit pas)."""
+    chosen = {}
+    for key, select in selects.items():
+        if not select.values:
+            chosen[key] = None
+        else:
+            chosen[key] = guild.get_channel(select.values[0].id) or MISSING_CHANNEL
+    return chosen
+
+
+MISSING_CHANNEL = object()
 
 
 class PlayersModal(BotModal):
@@ -1386,13 +1642,16 @@ class PlayersModal(BotModal):
 
 
 class OrderModal(BotModal):
-    def __init__(self, bot: DraftBot):
+    def __init__(self, bot: DraftBot, lottery_order: list[str] | None = None):
         super().__init__(bot, "Ordre du draft")
+        # Après une loterie, son résultat est déjà écrit : l'admin ajoute les autres équipes au besoin.
         self.teams = self.ask(
             "Équipes, dans l'ordre de la 1re ronde",
             discord.ui.TextInput(style=discord.TextStyle.paragraph, max_length=4000,
-                                 placeholder="Laval\nGranby\nMontréal"),
-            "Une équipe par ligne (ou séparées par des virgules), au nom exact de son rôle.")
+                                 placeholder="Laval\nGranby\nMontréal",
+                                 default="\n".join(lottery_order)[:4000] if lottery_order else None),
+            "Résultat de la loterie déjà écrit : ajoute les autres équipes au besoin." if lottery_order
+            else "Une équipe par ligne (ou séparées par des virgules), au nom exact de son rôle.")
         self.rounds = self.ask(
             "Nombre de rondes", discord.ui.TextInput(default="1", max_length=2),
             "Choix échangés ? Écris tous les choix dans l'ordre, puis mets 1 ronde.")
@@ -1440,30 +1699,264 @@ class TradeModal(BotModal):
         await trade_pick(self.bot, interaction, text_value(self.number), self.team.values[0])
 
 
+class LotteryModal(BotModal):
+    """La loterie : les équipes avec leurs chances, le nombre de choix tirés et ses salons."""
+
+    def __init__(self, bot: DraftBot, current: dict[str, int | None]):
+        super().__init__(bot, "Loterie du repêchage")
+        self.teams = self.ask(
+            "Équipes et chances, de la pire à la meilleure",
+            discord.ui.TextInput(style=discord.TextStyle.paragraph, max_length=2000,
+                                 placeholder="San Jose 18,5\nWinnipeg 13,5\nQuébec 11,5"),
+            "Une équipe par ligne : son nom (comme son rôle), puis ses chances en %.")
+        self.draws = self.ask("Nombre de choix tirés au sort", discord.ui.TextInput(default="2", max_length=2),
+                              "Ex. : 2 (comme la LNH). Les autres équipes gardent leur rang.")
+        self.lottery_channel = self.ask(CHANNEL_NAMES["lottery"], channel_select(current.get("lottery"), True),
+                                        CHANNEL_HELP["lottery"])
+        self.result_channel = self.ask(CHANNEL_NAMES["lottery_result"],
+                                       channel_select(current.get("lottery_result"), False),
+                                       CHANNEL_HELP["lottery_result"])
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        chosen = chosen_channels(interaction.guild, {"lottery": self.lottery_channel,
+                                                     "lottery_result": self.result_channel})
+        await run_lottery(self.bot, interaction, text_value(self.teams), text_value(self.draws), chosen)
+
+
 # Les actions des admins. Chaque changement est confirmé, noté au journal et suivi d'un panneau à jour.
 
 async def save_channels(bot: DraftBot, interaction: discord.Interaction, liste, selections) -> None:
-    store = bot.store
-    if liste is None or selections is None:
-        await reply(interaction, "Salon introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
-        return
-    if liste.id == selections.id:
-        await reply(interaction, "Choisis deux salons différents : un pour la liste, un pour les annonces.")
-        return
+    """La liste et les annonces seulement (les autres salons ne bougent pas)."""
+    await apply_channels(bot, interaction, {"list": liste or MISSING_CHANNEL, "picks": selections or MISSING_CHANNEL})
+
+
+def channels_problems(bot: DraftBot, guild: discord.Guild, final: dict[str, int | None],
+                      chosen: dict) -> str | None:
+    """Ce qui empêche d'enregistrer ces salons, ou None si tout est bon."""
+    if any(channel is MISSING_CHANNEL for channel in chosen.values()):
+        return "Salon introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`."
+    if not final["list"] or not final["picks"]:
+        return (f"Choisis d'abord le salon de la **{CHANNEL_NAMES['list']}** et celui des "
+                f"**{CHANNEL_NAMES['picks']}** (bouton **Salons principaux**).")
+    if final["list"] == final["picks"]:
+        return "Choisis deux salons différents : un pour la liste, un pour les annonces."
+    used_elsewhere = [CHANNEL_NAMES[k] for k, v in final.items() if k != "list" and v == final["list"]]
+    if used_elsewhere:
+        return ("Le salon de la liste des joueurs doit servir seulement à la liste. Il est aussi choisi pour : "
+                + ", ".join(used_elsewhere) + ".")
     missing = []
-    for channel in (liste, selections):
-        perms = channel.permissions_for(interaction.guild.me)
+    for channel in chosen.values():
+        if channel is None:
+            continue
+        perms = channel.permissions_for(guild.me)
         if not (perms.view_channel and perms.send_messages and perms.read_message_history):
             missing.append(channel.mention)
     if missing:
-        await reply(interaction, "🔒 Le bot ne peut pas voir, écrire ou lire l'historique dans : "
-                    + ", ".join(missing) + ". Corrige ses permissions puis recommence.")
+        return ("🔒 Le bot ne peut pas voir, écrire ou lire l'historique dans : "
+                + ", ".join(dict.fromkeys(missing)) + ". Corrige ses permissions puis recommence.")
+    return None
+
+
+def channels_summary(guild: discord.Guild, ids: dict[str, int | None], keys=None) -> list[str]:
+    lines = []
+    for key in keys or CHANNEL_NAMES:
+        channel = guild.get_channel(ids[key]) if ids.get(key) else None
+        lines.append(f"• {CHANNEL_NAMES[key]} : " + (channel.mention if channel else "—"))
+    return lines
+
+
+async def apply_channels(bot: DraftBot, interaction: discord.Interaction, chosen: dict) -> None:
+    """Enregistre les salons choisis (les autres ne bougent pas), puis met tout de suite à jour le tableau,
+    le guide, la centrale et les attributions : un salon retiré est vidé de ses messages du bot."""
+    store, guild = bot.store, interaction.guild
+    final = current_channel_ids(store, guild.id)
+    final.update({k: (v.id if v is not None and v is not MISSING_CHANNEL else None) for k, v in chosen.items()})
+    problem = channels_problems(bot, guild, final, chosen)
+    if problem:
+        await reply(interaction, problem)
         return
-    store.set_channels(interaction.guild_id, liste.id, selections.id)
-    store.add_log(interaction.guild_id, interaction.user.id, "salons", f"{liste.name} / {selections.name}")
-    await reply(interaction, f"✅ Liste dans {liste.mention}, annonces dans {selections.mention}."
-                + next_step_hint(bot, interaction.guild))
-    await bot.refresh_panels(interaction.guild, interaction.user.id)
+    # Publier le tableau, le guide ou les attributions peut prendre quelques secondes.
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    async with bot.locks[guild.id]:
+        store.set_channels(guild.id, final["list"], final["picks"])
+        store.set_draft_channels(guild.id, {k: final[k] for k in DRAFT_CHANNELS if k in chosen})
+        store.add_log(guild.id, interaction.user.id, "salons", ", ".join(
+            f"{CHANNEL_NAMES[k]} = {v.name if v is not None else 'aucun'}" for k, v in chosen.items()))
+        problems = await refresh_after_reset(bot, guild, guide=True)
+    text = "✅ Salons enregistrés :\n" + "\n".join(channels_summary(guild, final, list(chosen)))
+    guide = bot.draft_channel(guild, "guide")
+    if guide is not None and not getattr(guide.permissions_for(guild.me), "manage_messages", True):
+        text += f"\nℹ️ Le guide est publié dans {guide.mention}, mais le bot n'a pas la permission de l'épingler."
+    text += "".join(f"\n⚠️ {p[0].upper() + p[1:]}." for p in problems)
+    await reply(interaction, text + next_step_hint(bot, guild))
+    await bot.refresh_panels(guild, interaction.user.id)
+
+
+# « Remplir automatiquement » : le bot devine chaque salon d'après son nom.
+
+def channel_words(name: str) -> str:
+    return " " + re.sub(r"[^a-z0-9]+", " ", normalize(name)) + " "
+
+
+GUESS_RULES = [
+    ("lottery_result", lambda w: any(x in w for x in (" resultat", " result")) and any(
+        x in w for x in ("loterie", "lottery"))),
+    ("lottery", lambda w: "loterie" in w or "lottery" in w),
+    ("round1", lambda w: re.search(r" (ronde 1|1re ronde|1ere ronde|premiere ronde|round 1|1st round|first round) ", w)),
+    ("round2", lambda w: re.search(r" (ronde 2|2e ronde|2eme ronde|deuxieme ronde|round 2|2nd round|second round) ", w)),
+    ("list", lambda w: re.search(r" (listes?|list|disponibles?) ", w)),
+    ("board", lambda w: re.search(r" (selections?|au tour|on the clock) ", w)),
+    ("recap", lambda w: re.search(r" (centrale|recap|resume|bilan) ", w)),
+    ("owners", lambda w: re.search(r" (attributions?|proprietaires?) ", w)),
+    ("trades", lambda w: re.search(r" (trades?|echanges?) ", w)),
+    ("guide", lambda w: re.search(r" (fonctionnement|regles?|reglements?|guide|comment) ", w)),
+    ("picks", lambda w: re.search(r" (annonces?|choix|picks) ", w)),
+]
+
+
+def guess_channels(guild: discord.Guild) -> dict[str, discord.TextChannel]:
+    """Le salon qui correspond à chaque rôle d'après son nom (« ronde-1 », « loterie »…).
+
+    Si le serveur a une catégorie « Repêchage » ou « Draft », seuls ses salons sont regardés.
+    Un salon ne sert qu'à un seul rôle."""
+    channels = sorted(getattr(guild, "text_channels", []) or [], key=lambda c: getattr(c, "position", 0))
+    in_draft = [c for c in channels if getattr(c, "category", None) is not None
+                and re.search(r"repech|draft", normalize(c.category.name))]
+    candidates = in_draft or channels
+    found: dict[str, discord.TextChannel] = {}
+    used: set[int] = set()
+    for key, rule in GUESS_RULES:
+        for channel in candidates:
+            if channel.id not in used and rule(channel_words(channel.name)):
+                found[key] = channel
+                used.add(channel.id)
+                break
+    # Sans salon d'annonces à part, les choix sont annoncés dans le salon de la 1re ronde.
+    if "picks" not in found and "round1" in found:
+        found["picks"] = found["round1"]
+    return found
+
+
+async def autofill_channels(bot: DraftBot, interaction: discord.Interaction) -> None:
+    guild = interaction.guild
+    found = guess_channels(guild)
+    if not found:
+        await reply(interaction, "Je n'ai trouvé aucun salon au nom reconnaissable (ex. : « liste-des-joueurs », "
+                    "« ronde-1 »). Choisis-les avec **Salons principaux** et **Salons en plus**.")
+        return
+    final = current_channel_ids(bot.store, guild.id)
+    final.update({k: c.id for k, c in found.items()})
+    problem = channels_problems(bot, guild, final, dict(found))
+    if problem:
+        await reply(interaction, "J'ai trouvé ces salons :\n" + "\n".join(
+            channels_summary(guild, final, [k for k in CHANNEL_NAMES if k in found])) + "\n\n❌ " + problem)
+        return
+    lines = channels_summary(guild, final, [k for k in CHANNEL_NAMES if k in found])
+    not_found = [CHANNEL_NAMES[k] for k in CHANNEL_NAMES if k not in found]
+
+    async def confirmed(button_interaction: discord.Interaction) -> None:
+        await apply_channels(bot, button_interaction, dict(found))
+
+    text = "✨ **Voici les salons que j'ai trouvés d'après leur nom :**\n" + "\n".join(lines)
+    if not_found:
+        text += "\n\nPas trouvés (ils ne changent pas) : " + ", ".join(not_found) + "."
+    await ask_confirmation(interaction, text + "\n\nC'est bon ?", confirmed)
+
+
+# La loterie : le résultat est tiré et noté au journal AVANT l'animation : il ne peut plus changer.
+
+async def run_lottery(bot: DraftBot, interaction: discord.Interaction, teams_text: str, draws_text: str,
+                      chosen: dict) -> None:
+    guild = interaction.guild
+    try:
+        entries = lottery.parse_entries(teams_text)
+        draws = lottery.parse_draws(draws_text, len(entries))
+    except lottery.LotteryError as error:
+        await reply(interaction, f"❌ {error}\nRéessaie : `/admin`, **{DRAFT_BUTTON}**, **{MORE_OPTIONS}**, **Loterie**.")
+        return
+    channel, result_channel = chosen.get("lottery"), chosen.get("lottery_result")
+    if channel is None or channel is MISSING_CHANNEL or result_channel is MISSING_CHANNEL:
+        await reply(interaction, "Salon introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
+        return
+    blocked = [c.mention for c in (channel, result_channel) if c is not None and not bot_can_post(c, guild)]
+    if blocked:
+        await reply(interaction, "🔒 Le bot ne peut pas écrire dans : " + ", ".join(dict.fromkeys(blocked))
+                    + ". Corrige ses permissions puis recommence.")
+        return
+    total = sum(chance for _, chance in entries)
+    lines = [f"• {escape_markdown(team)} : {lottery.percent(100 * chance / total)} %" for team, chance in entries]
+    missing = [team for team, _ in entries if bot.team_role(guild, team) is None]
+    question = (f"🎰 Faire la loterie maintenant dans {channel.mention} ? On tire **{draws} choix** "
+                f"parmi {len(entries)} équipes :\n" + "\n".join(lines))
+    if abs(total - 100) > 0.5:
+        question += f"\nℹ️ Les chances donnent {lottery.percent(total)} % en tout : le bot les ramène à 100 %."
+    if missing:
+        question += ("\n⚠️ Aucun rôle Discord ne porte le nom de : " + ", ".join(escape_markdown(t) for t in missing)
+                     + ". Vérifie l'orthographe : ce nom ira tel quel dans l'ordre du draft.")
+
+    async def confirmed(button_interaction: discord.Interaction) -> None:
+        if guild.id in bot.lotteries:
+            await reply(button_interaction, "Une loterie est déjà en cours sur ce serveur. Attends qu'elle finisse.")
+            return
+        bot.lotteries.add(guild.id)
+        try:
+            await draw_lottery(bot, button_interaction, entries, draws, channel, result_channel)
+        finally:
+            bot.lotteries.discard(guild.id)
+
+    await ask_confirmation(interaction, question, confirmed)
+
+
+async def draw_lottery(bot: DraftBot, interaction: discord.Interaction, entries: list[tuple[str, float]],
+                       draws: int, channel: discord.TextChannel, result_channel: discord.TextChannel | None) -> None:
+    guild, store = interaction.guild, bot.store
+    title = "Loterie du repêchage"
+    winners = lottery.draw(entries, draws)
+    order = lottery.final_order(entries, winners)
+    store.set_draft_channels(guild.id, {"lottery": channel.id,
+                                        "lottery_result": result_channel.id if result_channel else None})
+    store.set_lottery_order(guild.id, order)
+    store.add_log(guild.id, interaction.user.id, "loterie", lottery.log_details(entries, order))
+    await reply(interaction, f"🎰 La loterie commence dans {channel.mention} ! Le résultat est déjà tiré "
+                "et noté au journal : il ne peut plus changer.")
+    try:
+        await channel.send(lottery.opening_message(title, entries, draws), allowed_mentions=NO_PINGS)
+        left = list(range(len(entries)))
+        for rank, winner in enumerate(winners, start=1):
+            await show_draw(bot, guild, channel, entries, left, winner, rank)
+            left.remove(winner)
+        target = result_channel or channel
+        await target.send(lottery.result_message(title, entries, order), allowed_mentions=NO_PINGS)
+    except discord.HTTPException:
+        log.exception("Loterie interrompue sur le serveur %s", guild.id)
+        await reply(interaction, "⚠️ Discord a refusé un message de la loterie. Le résultat est quand même gardé : "
+                    "ordre " + ", ".join(order) + ". Vérifie les permissions du bot (écrire, joindre des fichiers).")
+        return
+    await reply(interaction, "✅ Loterie terminée ! L'ordre est prêt : `/admin`, **Draft**, "
+                f"**{MORE_OPTIONS}**, **Changer l'ordre** (il est déjà écrit dedans, ajoute les autres équipes au besoin).")
+
+
+async def show_draw(bot: DraftBot, guild: discord.Guild, channel: discord.TextChannel, entries: list[tuple[str, float]],
+                    left: list[int], winner: int, rank: int) -> None:
+    """Un tirage : la roue tourne (parts selon les chances des équipes qui restent), puis le gagnant."""
+    names = [entries[i][0] for i in left]
+    weights = [entries[i][1] for i in left]
+    suspense = WHEEL_SUSPENSE
+    files = []
+    if bot_can_attach(channel, guild):
+        try:
+            gif = await asyncio.to_thread(wheel.render_gif, names, left.index(winner), weights=weights)
+            files = [discord.File(io.BytesIO(gif), filename="loterie.gif")]
+            suspense = max(suspense, wheel.spin_seconds() + WHEEL_SUSPENSE_AFTER_GIF)
+        except Exception:
+            # Sans image, la loterie marche quand même : le résultat en texte.
+            log.exception("Roue de la loterie impossible, résultat en texte seulement")
+    kwargs = {"file": files[0]} if files else {}
+    await channel.send(lottery.spinning_message(entries, left, rank), allowed_mentions=NO_PINGS, **kwargs)
+    await asyncio.sleep(suspense)
+    team = entries[winner][0]
+    role = bot.team_role(guild, team)
+    await channel.send(lottery.winner_message(team, role.mention if role else "", rank), allowed_mentions=PINGS)
 
 
 async def import_players(bot: DraftBot, interaction: discord.Interaction, fichier: discord.Attachment) -> None:
@@ -1493,7 +1986,10 @@ async def import_players(bot: DraftBot, interaction: discord.Interaction, fichie
             store.replace_players(guild_id, rows)
             store.add_log(guild_id, interaction.user.id, "liste", f"{len(rows)} joueurs importés")
             await bot.refresh_list(guild_id, channels[0], repost=True)
+            # Les choix déjà faits sont effacés : le tableau et les autres salons repartent de zéro.
+            problems = await refresh_after_reset(bot, interaction.guild)
         await reply(button_interaction, f"✅ {len(rows)} joueurs publiés dans {channels[0].mention}."
+                    + "".join(f"\n⚠️ {p[0].upper() + p[1:]}." for p in problems)
                     + next_step_hint(bot, interaction.guild))
         await bot.refresh_panels(interaction.guild, interaction.user.id)
 
@@ -1501,6 +1997,19 @@ async def import_players(bot: DraftBot, interaction: discord.Interaction, fichie
     if duplicates:
         text += "\n⚠️ Noms en double : " + ", ".join(duplicates)
     await ask_confirmation(interaction, text + reset_warning(store, guild_id), confirmed)
+
+
+async def refresh_after_reset(bot: DraftBot, guild: discord.Guild, guide: bool = False) -> list[str]:
+    """Après un nouvel ordre, une nouvelle liste ou d'autres salons : le tableau, la centrale et les
+    attributions sont refaits. Sans salon de sélection, un ancien tableau est effacé et le bouton
+    revient dans le salon des annonces."""
+    problems = []
+    try:
+        await bot.refresh_board(guild, ping=False)
+    except discord.HTTPException:
+        log.exception("Tableau du draft impossible à mettre à jour sur le serveur %s", guild.id)
+        problems.append("le tableau du draft n'a pas pu être mis à jour")
+    return problems + await bot.refresh_extras(guild, guide=guide)
 
 
 async def define_order(bot: DraftBot, interaction: discord.Interaction, teams_text: str, rounds_text: str,
@@ -1525,12 +2034,16 @@ async def define_order(bot: DraftBot, interaction: discord.Interaction, teams_te
             per_round = store.set_order(guild_id, order)
             store.add_log(guild_id, interaction.user.id, "ordre",
                           f"{len(order)} choix : " + ", ".join(team_display(t) for t in order))
+            # L'ordre de la loterie a servi : il n'est plus proposé.
+            store.set_lottery_order(guild_id, None)
             channels = bot.channels(interaction.guild)
             if channels and store.list_messages(guild_id):
                 await bot.refresh_list(guild_id, channels[0])
             # Le bouton « Faire mon choix » de l'ancien ordre ne doit plus rester en vue.
             await bot.remove_pick_button(interaction.guild)
+            problems = await refresh_after_reset(bot, interaction.guild)
         await reply(button_interaction, f"✅ {len(order)} choix, {per_round} équipes par ronde."
+                    + "".join(f"\n⚠️ {p[0].upper() + p[1:]}." for p in problems)
                     + next_step_hint(bot, interaction.guild))
         await bot.refresh_panels(interaction.guild, interaction.user.id)
 
@@ -1567,7 +2080,7 @@ async def launch_draft(bot: DraftBot, interaction: discord.Interaction) -> None:
     await ask_confirmation(
         interaction,
         f"Lancer le draft maintenant ? **{escape_markdown(first[0].team)}** sera averti que c'est son tour "
-        f"dans {channels[1].mention}.",
+        f"dans {(bot.notice_channel(interaction.guild) or channels[1]).mention}.",
         confirmed,
     )
 
@@ -1590,6 +2103,10 @@ async def set_delay(bot: DraftBot, interaction: discord.Interaction, delay_text:
             notice = (f"⌛ Nouveau délai : **{fmt.duration_text(seconds)}** par choix." if seconds
                       else "⌛ Il n'y a plus de délai par choix.")
             announced = await bot.announce(interaction.guild, notice)
+        # Le guide dit combien de temps chaque équipe a pour choisir.
+        if bot.draft_channel(interaction.guild, "guide") is not None:
+            for problem in await bot.refresh_extras(interaction.guild, guide=True):
+                announced += f"\n⚠️ {problem[0].upper() + problem[1:]}."
     if seconds == 0:
         text = "✅ Aucun délai par choix." + announced
     else:
@@ -1626,13 +2143,16 @@ async def trade_pick(bot: DraftBot, interaction: discord.Interaction, number_tex
             store.add_log(guild_id, interaction.user.id, "échange",
                           f"#{numero} : {pick.team} → {team_display(equipe)}")
             current = store.current_pick(guild_id)
-            announced = await bot.announce(
-                interaction.guild,
-                f"🔁 **Échange** : le {fmt.pick_label(pick)} de **{escape_markdown(pick.team)}** "
-                f"appartient maintenant à **{escape_markdown(team_display(equipe))}**.",
-                # Si c'est le choix en cours, la nouvelle équipe est mentionnée tout de suite.
-                with_clock=current is not None and current.number == numero,
-            )
+            is_current = current is not None and current.number == numero
+            trades_channel = bot.draft_channel(interaction.guild, "trades")
+            text = (f"🔁 **Échange** : le {fmt.pick_label(pick)} de **{escape_markdown(pick.team)}** "
+                    f"appartient maintenant à **{escape_markdown(team_display(equipe))}**.")
+            # Si c'est le choix en cours, la nouvelle équipe est mentionnée tout de suite.
+            # Avec un tableau, il est corrigé (les prochains choix changent) ; il n'est republié, avec la
+            # mention de l'équipe, que si c'est le choix en cours qui change de main.
+            announced = await bot.announce(interaction.guild, text, with_clock=is_current, channel=trades_channel)
+            for problem in await bot.refresh_extras(interaction.guild):
+                announced += f"\n⚠️ {problem[0].upper() + problem[1:]}."
         await reply(button_interaction,
                     f"✅ Le choix #{numero} appartient maintenant à **{team_display(equipe)}**." + announced)
         await bot.refresh_panels(interaction.guild, interaction.user.id)
@@ -1664,15 +2184,22 @@ async def undo_last_pick(bot: DraftBot, interaction: discord.Interaction) -> Non
             store.add_log(guild_id, interaction.user.id, "annulation",
                           f"#{last.number} {last.team} : {player.name}")
             channels = bot.channels(interaction.guild)
+            problems = []
             if channels:
                 if last.message_id:
-                    await delete_message(channels[1], last.message_id)
+                    old_channel = (interaction.guild.get_channel(last.message_channel_id)
+                                   if last.message_channel_id else None) or channels[1]
+                    await delete_message(old_channel, last.message_id)
                 await bot.refresh_list(guild_id, channels[0])
-                await bot.post_with_clock(
-                    interaction.guild, channels[1],
+                target = bot.announce_channel(interaction.guild, last.round) or channels[1]
+                await bot.publish(
+                    interaction.guild, target,
                     f"↩️ {fmt.pick_label(last)} annulé : **{escape_markdown(player.name)}** retourne dans la liste.",
+                    clock=True, problems=problems,
                 )
-        await reply(button_interaction, f"✅ {fmt.pick_label(last)} annulé.")
+                problems += await bot.refresh_extras(interaction.guild)
+        await reply(button_interaction, f"✅ {fmt.pick_label(last)} annulé."
+                    + "".join(f"\n⚠️ {p[0].upper() + p[1:]}." for p in problems))
         await bot.refresh_panels(interaction.guild, interaction.user.id)
 
     await ask_confirmation(
@@ -1893,7 +2420,7 @@ MORE_OPTIONS = "Plus d'options"
 DRAFT_BUTTON = "Draft"
 MENU_BUTTON = "Menu"
 # Les trois écrans du panneau.
-MENU_SCREEN, DRAFT_SCREEN, OPTIONS_SCREEN = "menu", "draft", "options"
+MENU_SCREEN, DRAFT_SCREEN, OPTIONS_SCREEN, SALONS_SCREEN = "menu", "draft", "options", "salons"
 CHANGE_CHANNELS = "Changer les salons"
 SHM_BUTTON = "Annonces SHM auto"
 
@@ -1969,13 +2496,25 @@ def panel_text(bot: DraftBot, guild: discord.Guild, screen: str = DRAFT_SCREEN) 
     store = bot.store
     if screen == MENU_SCREEN:
         return menu_text(bot, guild)
+    if screen == SALONS_SCREEN:
+        return "\n".join([
+            "📺 **Salons du repêchage**",
+            "Chaque salon a son rôle. Seuls les deux premiers sont obligatoires : sans salon, "
+            "la fonction n'est pas utilisée et tout va dans le salon des annonces.",
+            "",
+            *channels_summary(guild, current_channel_ids(store, guild.id)),
+            "",
+            "✨ **Remplir automatiquement** : le bot devine chaque salon d'après son nom, puis te demande de confirmer.",
+        ])
     if screen == OPTIONS_SCREEN:
         channels = bot.channels(guild)
         players = store.player_count(guild.id)
         picks = store.pick_count(guild.id)
+        extra = sum(1 for v in store.draft_channels(guild.id).values() if v)
         return "\n".join([
             f"⚙️ **Draft : {MORE_OPTIONS}**",
             "• Salons : " + (f"liste dans {channels[0].mention}, annonces dans {channels[1].mention}"
+                             + (f", et {extra} salon{'s' if extra > 1 else ''} en plus" if extra else "")
                              if channels else "pas encore choisis"),
             "• Joueurs : " + (f"{players}, dont {len(store.available_players(guild.id))} encore disponibles"
                               if players else "aucun"),
@@ -2009,7 +2548,7 @@ def panel_text(bot: DraftBot, guild: discord.Guild, screen: str = DRAFT_SCREEN) 
             *missing_roles_warning(bot, guild),
             "",
             f"Clique sur **▶ {LAUNCH_STEP}** quand tu veux commencer. "
-            f"La première équipe sera avertie dans {channels[1].mention}.",
+            f"La première équipe sera avertie dans {(bot.notice_channel(guild) or channels[1]).mention}.",
         ])
     if phase == "en cours":
         return "\n".join([
@@ -2066,14 +2605,21 @@ class AdminPanel(discord.ui.View):
             self.add("shm", SHM_BUTTON, self.open_shm, emoji="🔄", row=0)
             return panel_text(self.bot, guild, MENU_SCREEN)
         if self.screen == OPTIONS_SCREEN:
-            self.add("salons", CHANGE_CHANNELS, self.open_channels, emoji="📺", row=0)
+            self.add("salons", CHANGE_CHANNELS, self.show_salons, emoji="📺", row=0)
             self.add("joueurs", "Changer les joueurs", self.open_players, emoji="📋", row=0)
             self.add("ordre", "Changer l'ordre", self.open_order, emoji="🔢", row=0)
             self.add("delai", "Délai par choix", self.open_delay, emoji="⌛", row=1)
             self.add("echange", "Échanger un choix", self.open_trade, emoji="🔁", row=1)
             self.add("journal", "Journal", self.journal, emoji="📒", row=1)
+            self.add("loterie", "Loterie", self.open_lottery, emoji="🎰", row=2)
             self.add("retour", "Retour", self.show_draft, style=primary, emoji="⬅️", row=2)
             return panel_text(self.bot, guild, OPTIONS_SCREEN)
+        if self.screen == SALONS_SCREEN:
+            self.add("principaux", "Salons principaux", self.open_channels, style=primary, emoji="📺", row=0)
+            self.add("plus", "Salons en plus", self.open_extra_channels, emoji="➕", row=0)
+            self.add("auto", "Remplir automatiquement", self.autofill, emoji="✨", row=1)
+            self.add("retour", "Retour", self.show_more, emoji="⬅️", row=1)
+            return panel_text(self.bot, guild, SALONS_SCREEN)
         phase = panel_phase(self.bot, guild)
         if phase == "préparation":
             key, name, _ = SETUP_STEPS[missing_setup_step(self.bot, guild)]
@@ -2133,8 +2679,22 @@ class AdminPanel(discord.ui.View):
     async def show_more(self, interaction: discord.Interaction) -> None:
         await self.show(interaction, OPTIONS_SCREEN)
 
+    async def show_salons(self, interaction: discord.Interaction) -> None:
+        await self.show(interaction, SALONS_SCREEN)
+
     async def open_channels(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(ChannelsModal(self.bot, self.bot.store.get_channels(interaction.guild_id)))
+        store = self.bot.store
+        await interaction.response.send_modal(ChannelsModal(self.bot, store.get_channels(interaction.guild_id),
+                                                            store.draft_channels(interaction.guild_id)))
+
+    async def open_extra_channels(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(ExtraChannelsModal(self.bot, self.bot.store.draft_channels(interaction.guild_id)))
+
+    async def autofill(self, interaction: discord.Interaction) -> None:
+        await autofill_channels(self.bot, interaction)
+
+    async def open_lottery(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(LotteryModal(self.bot, self.bot.store.draft_channels(interaction.guild_id)))
 
     async def open_players(self, interaction: discord.Interaction) -> None:
         if not self.bot.channels(interaction.guild):
@@ -2143,7 +2703,7 @@ class AdminPanel(discord.ui.View):
         await interaction.response.send_modal(PlayersModal(self.bot))
 
     async def open_order(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(OrderModal(self.bot))
+        await interaction.response.send_modal(OrderModal(self.bot, self.bot.store.lottery_order(interaction.guild_id)))
 
     async def open_delay(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(DelayModal(self.bot, *self.bot.store.timer(interaction.guild_id)))
@@ -2175,7 +2735,7 @@ class AdminPanel(discord.ui.View):
 
 HELP_TEXT = """\
 🏒 **Le draft : comment faire ton choix**
-1. Quand c'est ton tour, le bot mentionne ton équipe dans le salon des annonces.
+1. Quand c'est ton tour, le bot mentionne ton équipe (dans le salon de la sélection des joueurs, ou des annonces).
 2. Clique sur le bouton vert **Faire mon choix** sous ce message.
 3. Choisis ton joueur (ou tape quelques lettres de son nom), puis clique sur **Confirmer**.
 
@@ -2187,8 +2747,10 @@ ADMIN_HELP = """
 🛠️ **Admins** : `/admin` ouvre le panneau de la ligue, avec deux boutons :
 • **Draft** : un seul bouton à la fois, clique dessus pour passer à l'étape suivante, jusqu'à \
 **▶ Lancer le draft**. Pendant le draft : **Choisir pour l'équipe au tour** et **Annuler le dernier choix**. \
-Tout le reste (échanger un choix, délai, journal, changer les salons, les joueurs ou l'ordre) est dans \
-**Plus d'options**.
+Tout le reste (échanger un choix, délai, journal, loterie, changer les salons, les joueurs ou l'ordre) est \
+dans **Plus d'options**. Dans **Changer les salons**, chaque salon du repêchage a son rôle (sélection des \
+joueurs, ronde 1, ronde 2, guide, centrale, attributions, échanges) ; **Remplir automatiquement** les trouve \
+d'après leur nom.
 • **Annonces SHM auto** : rachats, ballottages, transactions et classement publiés tout seuls."""
 
 
