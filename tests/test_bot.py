@@ -10,8 +10,8 @@ import pytest
 
 import draft_bot.bot as bot_module
 from draft_bot import formatting as fmt
-from draft_bot.bot import (AdminPanel, ChannelsModal, DelayModal, DraftBot, OrderModal, PickButtonView,
-                           PlayerMenu, PlayersModal, SearchModal, TradeModal)
+from draft_bot.bot import (AdminPanel, ChannelsModal, DelayModal, DraftBot, ExtraChannelsModal, OrderModal,
+                           PickButtonView, PlayerMenu, PlayersModal, SearchModal, TradeModal)
 from draft_bot.storage import Store
 
 ids = itertools.count(1000)
@@ -24,6 +24,12 @@ class FakeMessage:
         self.content = content
         self.view = view
         self.file = file
+        self.pinned = False
+
+    async def pin(self):
+        if not self.channel.can_pin:
+            raise discord.Forbidden(FakeHTTPResponse(), "épingler refusé")
+        self.pinned = True
 
 
 class FakeHTTPResponse:
@@ -65,6 +71,9 @@ class FakeChannel:
         # Par défaut, le bot ne peut pas joindre de fichiers : les annonces partent en texte.
         self.attach_files = False
         self.refuse_files = False
+        self.can_pin = True
+        self.category = None
+        self.position = self.id
 
     async def send(self, content, **kwargs):
         if kwargs.get("file") is not None and self.refuse_files:
@@ -106,6 +115,10 @@ class FakeGuild:
 
     def get_channel(self, channel_id):
         return self.channels.get(channel_id)
+
+    @property
+    def text_channels(self):
+        return list(self.channels.values())
 
     def get_role(self, role_id):
         return next((r for r in self.roles if r.id == role_id), None)
@@ -718,7 +731,7 @@ def test_full_setup_from_the_panel_one_button_at_a_time(empty_league):
         assert isinstance(modal, ChannelsModal)
         done = FakeInteraction(guild, admin)
         await fill(modal, list_channel=[liste], picks_channel=[selections]).on_submit(done)
-        assert "✅ Liste dans #draft-liste" in done.last and "Importer les joueurs" in done.last
+        assert "Liste des joueurs : #draft-liste" in done.last and "Importer les joueurs" in done.last
         # le panneau s'est mis à jour tout seul : un seul bouton, celui de l'étape suivante
         assert "étape 2 sur 4" in panel_i.edits[-1] and keys(panel) == ["joueurs", "options", "menu"]
 
@@ -875,12 +888,21 @@ def test_more_options_keeps_every_feature_and_back_returns(league):
         assert keys(panel) == ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"]
         assert "Plus d'options" in more.last and "#draft-liste" in more.last and "4 choix" in more.last
         modals = {}
-        for key, modal in (("salons", ChannelsModal), ("joueurs", PlayersModal), ("ordre", OrderModal),
+        for key, modal in (("joueurs", PlayersModal), ("ordre", OrderModal),
                            ("delai", DelayModal), ("echange", TradeModal)):
             i = await click(panel, button(panel, key), FakeInteraction(guild, admin))
             assert isinstance(i.response.modal, modal), key
             modals[key] = i.response.modal
-        assert modals["salons"].list_channel.default_values  # les salons actuels sont déjà choisis
+        # « Changer les salons » ouvre l'écran des salons : principaux, en plus, remplir automatiquement.
+        salons = await click(panel, button(panel, "salons"), FakeInteraction(guild, admin))
+        assert keys(panel) == ["principaux", "plus", "auto", "retour"] and "Salons du repêchage" in salons.last
+        for key, modal in (("principaux", ChannelsModal), ("plus", ExtraChannelsModal)):
+            i = await click(panel, button(panel, key), FakeInteraction(guild, admin))
+            assert isinstance(i.response.modal, modal), key
+            modals[key] = i.response.modal
+        assert modals["principaux"].list_channel.default_values  # les salons actuels sont déjà choisis
+        await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
+        assert "journal" in keys(panel)
         back = await click(panel, button(panel, "retour"), FakeInteraction(guild, admin))
         assert keys(panel) == ["choisir", "annuler", "options", "menu"] and "en cours" in back.last
     run(scenario())
@@ -1117,7 +1139,8 @@ def test_windows_respect_discord_limits():
         bot = DraftBot(Store(":memory:"), backup_dir=None)
         for modal in (SearchModal(bot, False), SearchModal(bot, True), ChannelsModal(bot, (1, 2)),
                       ChannelsModal(bot, None), PlayersModal(bot), OrderModal(bot), DelayModal(bot, 3600, 5),
-                      DelayModal(bot, 0, None), TradeModal(bot)):
+                      DelayModal(bot, 0, None), TradeModal(bot), ExtraChannelsModal(bot, {}),
+                      ExtraChannelsModal(bot, {"guide": 5}), ChannelsModal(bot, (1, 2), {"board": 3, "round1": 4})):
             data = modal.to_dict()
             assert len(data["title"]) <= 45 and len(data["components"]) <= 5
             for row in data["components"]:
@@ -1157,6 +1180,7 @@ def all_panel_screens():
     store.make_pick(guild.id, 1, store.available_players(guild.id)[0].id)
     snap()
     snap("options")
+    snap("salons")
     snap("menu")
     return screens
 
@@ -1168,6 +1192,7 @@ def test_every_panel_screen_shows_few_buttons():
         ["salons", "options", "menu"], ["joueurs", "options", "menu"], ["ordre", "options", "menu"], ["lancer", "options", "menu"],
         ["choisir", "annuler", "options", "menu"], ["annuler", "options", "menu"],
         ["salons", "joueurs", "ordre", "delai", "echange", "journal", "retour"],
+        ["principaux", "plus", "auto", "retour"],
         ["draft", "shm"],
     ]
 

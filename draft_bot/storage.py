@@ -66,6 +66,17 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- Les messages que le bot garde à jour en les modifiant : le tableau du draft, le guide,
+-- la centrale (les choix de chaque équipe) et les attributions des choix. Un « kind » par sorte.
+CREATE TABLE IF NOT EXISTS managed_messages (
+    guild_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    PRIMARY KEY (guild_id, kind, position)
+);
 """
 
 # Colonnes ajoutées après la première version : une base existante les reçoit au démarrage.
@@ -92,7 +103,29 @@ CONFIG_COLUMNS = {
     "shm_standings_messages": "TEXT",
     # Le dernier classement lu, les rangs et les places gagnées ou perdues à la dernière simulation (JSON).
     "shm_standings_state": "TEXT",
+    # Le salon du message qui porte le bouton « Faire mon choix » (NULL : le salon des annonces).
+    "button_channel_id": "INTEGER",
+    # Les salons facultatifs du repêchage (voir DRAFT_CHANNELS). NULL : pas utilisé.
+    "draft_board_channel_id": "INTEGER",
+    "draft_round1_channel_id": "INTEGER",
+    "draft_round2_channel_id": "INTEGER",
+    "draft_guide_channel_id": "INTEGER",
+    "draft_recap_channel_id": "INTEGER",
+    "draft_owners_channel_id": "INTEGER",
+    "draft_trades_channel_id": "INTEGER",
 }
+
+# Colonnes ajoutées à la table des choix.
+PICK_COLUMNS = {
+    # L'équipe qui avait ce choix au départ, avant les échanges (affichée « via … »).
+    "original_team": "TEXT",
+    # Le salon de l'annonce du choix (les rondes peuvent avoir chacune leur salon).
+    "message_channel_id": "INTEGER",
+}
+
+# Les salons facultatifs du repêchage. Chaque ligue choisit les siens dans /admin ; sans salon, la
+# fonction n'est pas utilisée et tout se passe comme avant (dans le salon des annonces).
+DRAFT_CHANNELS = ("board", "round1", "round2", "guide", "recap", "owners", "trades")
 
 # Les sortes d'annonces SHM, chacune dans son propre salon si on veut.
 SHM_KINDS = ("trades", "waivers", "buyouts", "standings")
@@ -141,6 +174,16 @@ class Pick:
     team: str
     player_id: int | None
     message_id: int | None
+    # L'équipe qui avait ce choix avant un échange (None : la même que team).
+    original_team: str | None = None
+    message_channel_id: int | None = None
+
+    @property
+    def via(self) -> str | None:
+        """L'équipe d'origine si le choix a changé de main, sinon None."""
+        if self.original_team and normalize(self.original_team) != normalize(self.team):
+            return self.original_team
+        return None
 
 
 class Store:
@@ -165,6 +208,10 @@ class Store:
             for name, definition in CONFIG_COLUMNS.items():
                 if name not in existing:
                     self.db.execute(f"ALTER TABLE config ADD COLUMN {name} {definition}")
+            pick_columns = {row[1] for row in self.db.execute("PRAGMA table_info(picks)")}
+            for name, definition in PICK_COLUMNS.items():
+                if name not in pick_columns:
+                    self.db.execute(f"ALTER TABLE picks ADD COLUMN {name} {definition}")
             if "started" not in existing:
                 # Avant le bouton « Lancer le draft », définir l'ordre lançait le draft :
                 # un draft déjà commencé dans une ancienne base continue sans rien changer.
@@ -187,6 +234,23 @@ class Store:
         ).fetchone()
         return (row[0], row[1]) if row else None
 
+    def draft_channels(self, guild_id: int) -> dict[str, int | None]:
+        """Les salons facultatifs du repêchage : {« board »: id ou None, …}."""
+        columns = ", ".join(f"draft_{key}_channel_id" for key in DRAFT_CHANNELS)
+        row = self.db.execute(f"SELECT {columns} FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return {key: (row[i] if row else None) for i, key in enumerate(DRAFT_CHANNELS)}
+
+    def set_draft_channels(self, guild_id: int, channels: dict[str, int | None]) -> None:
+        """Change les salons donnés (None : pas utilisé). Les autres ne bougent pas."""
+        unknown = set(channels) - set(DRAFT_CHANNELS)
+        if unknown:
+            raise ValueError(f"Salons inconnus : {unknown}")
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO config (guild_id) VALUES (?)", (guild_id,))
+            for key, channel_id in channels.items():
+                self.db.execute(f"UPDATE config SET draft_{key}_channel_id = ? WHERE guild_id = ?",
+                                (channel_id, guild_id))
+
     # Joueurs
 
     def replace_players(self, guild_id: int, rows: list[tuple[str, str, str]]) -> None:
@@ -194,7 +258,8 @@ class Store:
         with self.db:
             self.db.execute("DELETE FROM players WHERE guild_id = ?", (guild_id,))
             self.db.execute(
-                "UPDATE picks SET player_id = NULL, message_id = NULL WHERE guild_id = ?", (guild_id,)
+                "UPDATE picks SET player_id = NULL, message_id = NULL, message_channel_id = NULL WHERE guild_id = ?",
+                (guild_id,),
             )
             self.db.executemany(
                 "INSERT INTO players (guild_id, name, team, position) VALUES (?, ?, ?, ?)",
@@ -254,9 +319,9 @@ class Store:
             self.db.execute("DELETE FROM picks WHERE guild_id = ?", (guild_id,))
             self.db.execute("UPDATE players SET drafted = 0 WHERE guild_id = ?", (guild_id,))
             self.db.executemany(
-                "INSERT INTO picks (guild_id, number, round, in_round, team) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO picks (guild_id, number, round, in_round, team, original_team) VALUES (?, ?, ?, ?, ?, ?)",
                 [
-                    (guild_id, i + 1, i // per_round + 1, i % per_round + 1, team_display(team))
+                    (guild_id, i + 1, i // per_round + 1, i % per_round + 1, team_display(team), team_display(team))
                     for i, team in enumerate(teams)
                 ],
             )
@@ -283,7 +348,8 @@ class Store:
 
     def _picks(self, sql: str, params: tuple) -> list[Pick]:
         rows = self.db.execute(
-            "SELECT number, round, in_round, team, player_id, message_id FROM picks " + sql, params
+            "SELECT number, round, in_round, team, player_id, message_id, original_team, message_channel_id FROM picks "
+            + sql, params
         ).fetchall()
         return [Pick(*row) for row in rows]
 
@@ -353,11 +419,14 @@ class Store:
         self.start_clock(guild_id)
         return pick, player
 
-    def set_pick_message(self, guild_id: int, number: int, message_id: int) -> None:
+    def all_picks(self, guild_id: int) -> list[Pick]:
+        return self._picks("WHERE guild_id = ? ORDER BY number", (guild_id,))
+
+    def set_pick_message(self, guild_id: int, number: int, message_id: int, channel_id: int | None = None) -> None:
         with self.db:
             self.db.execute(
-                "UPDATE picks SET message_id = ? WHERE guild_id = ? AND number = ?",
-                (message_id, guild_id, number),
+                "UPDATE picks SET message_id = ?, message_channel_id = ? WHERE guild_id = ? AND number = ?",
+                (message_id, channel_id, guild_id, number),
             )
 
     def undo_pick(self, guild_id: int, number: int) -> None:
@@ -366,7 +435,8 @@ class Store:
             return
         with self.db:
             self.db.execute(
-                "UPDATE picks SET player_id = NULL, message_id = NULL WHERE guild_id = ? AND number = ?",
+                "UPDATE picks SET player_id = NULL, message_id = NULL, message_channel_id = NULL "
+                "WHERE guild_id = ? AND number = ?",
                 (guild_id, number),
             )
             self.db.execute(
@@ -455,12 +525,18 @@ class Store:
         row = self.db.execute("SELECT button_message_id FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
         return row[0] if row else None
 
-    def set_button_message(self, guild_id: int, message_id: int | None) -> None:
+    def button_channel(self, guild_id: int) -> int | None:
+        """Le salon de ce message, ou None : le salon des annonces (comme avant)."""
+        row = self.db.execute("SELECT button_channel_id FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return row[0] if row else None
+
+    def set_button_message(self, guild_id: int, message_id: int | None, channel_id: int | None = None) -> None:
         with self.db:
             self.db.execute(
-                "INSERT INTO config (guild_id, button_message_id) VALUES (?, ?) "
-                "ON CONFLICT (guild_id) DO UPDATE SET button_message_id = excluded.button_message_id",
-                (guild_id, message_id),
+                "INSERT INTO config (guild_id, button_message_id, button_channel_id) VALUES (?, ?, ?) "
+                "ON CONFLICT (guild_id) DO UPDATE SET button_message_id = excluded.button_message_id, "
+                "button_channel_id = excluded.button_channel_id",
+                (guild_id, message_id, channel_id if message_id else None),
             )
 
     # Transactions SHM automatiques
@@ -667,3 +743,25 @@ class Store:
                 "INSERT INTO list_messages VALUES (?, ?, ?, ?)",
                 [(guild_id, i, mid, content) for i, (mid, content) in enumerate(messages)],
             )
+
+    # Messages gardés à jour (tableau, guide, centrale, attributions)
+
+    def managed_messages(self, guild_id: int, kind: str) -> tuple[int | None, list[tuple[int, str]]]:
+        """(salon, [(message, texte)]) de cette sorte de message, dans l'ordre."""
+        rows = self.db.execute(
+            "SELECT channel_id, message_id, content FROM managed_messages WHERE guild_id = ? AND kind = ? "
+            "ORDER BY position", (guild_id, kind),
+        ).fetchall()
+        if not rows:
+            return None, []
+        return rows[0][0], [(row[1], row[2]) for row in rows]
+
+    def set_managed_messages(self, guild_id: int, kind: str, channel_id: int | None,
+                             messages: list[tuple[int, str]]) -> None:
+        with self.db:
+            self.db.execute("DELETE FROM managed_messages WHERE guild_id = ? AND kind = ?", (guild_id, kind))
+            if channel_id is not None:
+                self.db.executemany(
+                    "INSERT INTO managed_messages VALUES (?, ?, ?, ?, ?, ?)",
+                    [(guild_id, kind, i, channel_id, mid, content) for i, (mid, content) in enumerate(messages)],
+                )
