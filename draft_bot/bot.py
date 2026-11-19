@@ -874,7 +874,7 @@ class DraftBot(discord.Client):
         """Annonce les signatures de l'accueil pas encore annoncées, de la plus ancienne à la plus récente.
 
         La première lecture retient les signatures déjà sur l'accueil sans les annoncer. Elles vont
-        dans leur propre salon (bouton « Salon des signatures ») ; sans salon, elles sont retenues
+        dans leur propre salon (menu « Salon des signatures » des annonces SHM) ; sans salon, elles sont retenues
         sans être annoncées."""
         guild = self.get_guild(guild_id)
         posted = 0
@@ -2241,7 +2241,7 @@ class ShmModal(BotModal):
         self.waivers = self.ask("Salon du ballottage", select("waivers", False),
                                 "Laisse vide pour ne pas annoncer le ballottage.")
         self.buyouts = self.ask("Salon des rachats", select("buyouts", False),
-                                "Laisse vide pour ne pas annoncer les rachats.")
+                                "Laisse vide pour ne pas annoncer les rachats. Les signatures : juste après Envoyer.")
         self.standings = self.ask("Salon du classement", select("standings", False),
                                   "Le classement y est publié et mis à jour tout seul. Laisse vide si tu n'en veux pas.")
 
@@ -2256,22 +2256,32 @@ class ShmModal(BotModal):
                          "standings": chosen(self.standings)})
 
 
-class SigningsModal(BotModal):
-    """Le salon des signatures SHM : à part, parce que la fenêtre des annonces SHM est pleine
-    (Discord permet au plus 5 champs)."""
+class SigningsView(discord.ui.View):
+    """Le menu du salon des signatures, sous le message « C'est branché » des annonces SHM.
 
-    def __init__(self, bot: DraftBot, guild_id: int):
-        super().__init__(bot, SIGNINGS_BUTTON)
+    Il fait partie des annonces SHM automatiques, mais pas de leur fenêtre : Discord y permet au
+    plus 5 champs, déjà tous pris. Choisir aucun salon arrête les signatures."""
+
+    def __init__(self, bot: DraftBot, guild_id: int, user_id: int):
+        super().__init__(timeout=PANEL_SECONDS)
+        self.bot, self.user_id = bot, user_id
         channel_id = bot.store.shm_channels(guild_id)["signings"]
         default = [discord.Object(id=channel_id, type=discord.TextChannel)] if channel_id else []
-        self.channel = self.ask(SIGNINGS_BUTTON, discord.ui.ChannelSelect(
-            channel_types=[discord.ChannelType.text], default_values=default, min_values=0, required=False),
-            "Chaque nouvelle signature de contrat y sera annoncée. Laisse vide pour ne pas les annoncer.")
+        self.menu = discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=default,
+                                             min_values=0, max_values=1, placeholder="Salon des signatures")
+        self.menu.callback = self.chosen
+        self.add_item(self.menu)
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.user_id
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        await report_error(interaction, error)
+
+    async def chosen(self, interaction: discord.Interaction) -> None:
         target = None
-        if self.channel.values:
-            target = interaction.guild.get_channel(self.channel.values[0].id) or False
+        if self.menu.values:
+            target = interaction.guild.get_channel(self.menu.values[0].id) or False
         await set_signings_channel(self.bot, interaction, target)
 
 
@@ -2283,7 +2293,7 @@ async def set_signings_channel(bot: DraftBot, interaction: discord.Interaction,
         await reply(interaction, shm_owner_only(bot))
         return
     if target is False:
-        await reply(interaction, "Salon des signatures introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
+        await reply(interaction, "Salon des signatures introuvable. Le bot voit-il ce salon ? Choisis-en un autre.")
         return
     if target is not None and not bot_can_post(target, guild):
         await reply(interaction, f"🔒 Le bot ne peut pas écrire dans {target.mention}. Corrige ses permissions ou "
@@ -2384,13 +2394,13 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
         target = chosen[kind]
         lines.append(f"• {SHM_KIND_NAMES[kind].capitalize()} : " + (target.mention if target else "pas annoncé"))
     signings = bot.shm_channels(guild.id)[0]["signings"]
-    lines.append("• Signatures : " + (signings.mention if signings else
-                                      f"pas annoncé (bouton ✍️ **{SIGNINGS_BUTTON}** dans `/admin`)"))
+    lines.append("• Signatures : " + (signings.mention if signings else "pas annoncé"))
     if standings_error:
         lines.append(f"⚠️ Classement pas encore publié : {standings_error} Je réessaie tout seul.")
     lines.append(f"Ce qui arrive sur SHM est annoncé moins de {SHM_CHECK_MINUTES} minutes plus tard. "
                  "Ce qui y était déjà n'est pas réannoncé.")
-    await reply(interaction, "\n".join(lines))
+    lines.append(f"✍️ **{SIGNINGS_BUTTON}** : choisis-le dans le menu juste en dessous (vide : pas annoncées).")
+    await reply(interaction, "\n".join(lines), view=SigningsView(bot, guild.id, interaction.user.id))
     await bot.refresh_panels(guild)
 
 
@@ -2612,8 +2622,6 @@ class AdminPanel(discord.ui.View):
         if self.screen == MENU_SCREEN:
             self.add("draft", DRAFT_BUTTON, self.show_draft, style=primary, emoji="🏒", row=0)
             self.add("shm", SHM_BUTTON, self.open_shm, emoji="🔄", row=0)
-            if self.bot.store.shm_league(guild.id):
-                self.add("signatures", SIGNINGS_BUTTON, self.open_signings, emoji="✍️", row=0)
             return panel_text(self.bot, guild, MENU_SCREEN)
         if self.screen == OPTIONS_SCREEN:
             self.add("salons", CHANGE_CHANNELS, self.show_salons, emoji="📺", row=0)
@@ -2738,15 +2746,6 @@ class AdminPanel(discord.ui.View):
             await reply(interaction, SHM_NOT_CONFIGURED)
             return
         await interaction.response.send_modal(ShmModal(self.bot, interaction.guild_id))
-
-    async def open_signings(self, interaction: discord.Interaction) -> None:
-        if not self.bot.is_owner_id(interaction.user.id):
-            await reply(interaction, shm_owner_only(self.bot))
-            return
-        if not self.bot.store.shm_league(interaction.guild_id):
-            await reply(interaction, f"Branche d'abord ta ligue SHM : bouton 🔄 **{SHM_BUTTON}**.")
-            return
-        await interaction.response.send_modal(SigningsModal(self.bot, interaction.guild_id))
 
 
 HELP_TEXT = """\

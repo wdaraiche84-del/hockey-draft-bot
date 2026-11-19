@@ -292,9 +292,7 @@ async def open_panel(bot, guild, admin, draft=True):
     """Tape /admin. Le panneau s'ouvre sur le menu de la ligue ; avec draft=True, clique aussi sur « Draft »."""
     i = await command(bot, "admin", FakeInteraction(guild, admin))
     assert isinstance(i.view, AdminPanel)
-    # « Salon des signatures » n'apparaît qu'une fois une ligue SHM branchée.
-    expected = ["draft", "shm"] + (["signatures"] if bot.store.shm_league(guild.id) else [])
-    assert keys(i.view) == expected and "Panneau de la ligue" in i.last
+    assert keys(i.view) == ["draft", "shm"] and "Panneau de la ligue" in i.last
     if draft:
         await click(i.view, button(i.view, "draft"), i)
     return i
@@ -1423,7 +1421,7 @@ def test_discord_finds_the_new_buttons_after_each_screen_change(league):
 from pathlib import Path
 
 from draft_bot import moves, shm, transactions
-from draft_bot.bot import ShmModal, SigningsModal
+from draft_bot.bot import ShmModal, SigningsView
 
 SHM_PAGE = (Path(__file__).parent / "fixtures" / "shm_historique.html").read_text(encoding="utf-8")
 SHM_WAIVERS = (Path(__file__).parent / "fixtures" / "shm_ballottage.html").read_text(encoding="utf-8")
@@ -1545,14 +1543,14 @@ async def setup_shm_from_panel(bot, guild, admin, channel, address, waivers=SAME
     return i, panel
 
 
-async def set_signings_from_panel(bot, guild, admin, channel):
-    """Clique sur « Salon des signatures » dans /admin et choisit ce salon (None : aucun)."""
-    panel = (await open_panel(bot, guild, admin, draft=False)).view
-    opened = await click(panel, button(panel, "signatures"), FakeInteraction(guild, admin))
-    modal = opened.response.modal
-    assert isinstance(modal, SigningsModal), opened.sent
-    i = FakeInteraction(guild, admin)
-    await fill(modal, channel=[] if channel is None else [channel]).on_submit(i)
+async def pick_signings(setup, channel, user=None):
+    """Choisit ce salon (None : aucun) dans le menu des signatures, sous le message « C'est branché »."""
+    view = setup.view
+    assert isinstance(view, SigningsView), setup.last
+    i = FakeInteraction(setup.guild, user or setup.user)
+    view.menu._values = [] if channel is None else [channel]
+    if await view.interaction_check(i):
+        await view.chosen(i)
     return i
 
 
@@ -2157,8 +2155,8 @@ def test_signings_already_on_shm_are_quiet_then_new_ones_are_announced(shm_leagu
     site.add_home("NYI", "file-signature", signed_line("Matthew Barzal", "5 250 000", 8))
 
     async def scenario():
-        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        await set_signings_from_panel(bot, guild, admin, channel)
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await pick_signings(i, channel)
         await bot.check_shm()
         quiet = list(channel.texts())
         site.add_home("MTL", "file-signature", signed_line("Josh Anderson", "2 000 000", 1, "AHL"))
@@ -2184,8 +2182,8 @@ def test_existing_league_does_not_flood_old_signings_after_the_update(shm_league
     bot, store, guild, admin, channel, roles, site = shm_league
 
     async def scenario():
-        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        await set_signings_from_panel(bot, guild, admin, channel)
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await pick_signings(i, channel)
         # Comme un serveur branché avant cette mise à jour : les signatures n'ont jamais été retenues.
         with store.db:
             store.db.execute("UPDATE config SET shm_signings_primed = 0")
@@ -2214,8 +2212,8 @@ def test_signing_is_announced_with_its_image_and_shm_ratings(shm_league, monkeyp
     monkeypatch.setattr(bot_module.contract_card, "render_png", spy)
 
     async def scenario():
-        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        await set_signings_from_panel(bot, guild, admin, channel)
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await pick_signings(i, channel)
         site.roster_requests.clear()
         site.add_home("MTL", "file-signature", signed_line("Kevin Fiala", "6 000 000", 4))
         await bot.check_shm()
@@ -2244,8 +2242,8 @@ def test_signing_is_announced_in_text_when_the_image_or_shm_fails(shm_league, mo
     monkeypatch.setattr(bot_module.contract_card, "render_png", broken)
 
     async def scenario():
-        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        await set_signings_from_panel(bot, guild, admin, channel)
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await pick_signings(i, channel)
         site.roster_error = shm.ShmError("SHM ne répond pas.")
         site.add_home("MTL", "file-signature", signed_line("Kevin Fiala", "6 000 000", 4))
         await bot.check_shm()
@@ -2274,18 +2272,18 @@ def test_signings_have_their_own_channel_separate_from_buyouts(shm_league):
         site.add_home("MTL", "file-signature", signed_line("Brendan Gallagher", "6 500 000", 6))
         await bot.check_shm()
         before = list(site.roster_requests)
-        chosen = await set_signings_from_panel(bot, guild, admin, signings)
+        chosen = await pick_signings(i, signings)
         menu = (await open_panel(bot, guild, admin, draft=False)).last
         site.add_home("MTL", "file-signature", signed_line("Kevin Fiala", "6 000 000", 4))
         site.add_home("MTL", "gavel", "Josh Anderson a été racheté au salaire de 2 750 000$")
         await bot.check_shm()
-        stopped = await set_signings_from_panel(bot, guild, admin, None)
+        stopped = await pick_signings(i, None)
         site.roster_requests.clear()
         site.add_home("MTL", "file-signature", signed_line("Nick Suzuki", "7 875 000", 8))
         await bot.check_shm()
         return i.last, before, chosen.last, menu, stopped.last
     setup, before, chosen, menu, stopped = run(scenario())
-    assert "• Signatures : pas annoncé (bouton ✍️ **Salon des signatures** dans `/admin`)" in setup
+    assert "• Signatures : pas annoncé" in setup and "choisis-le dans le menu juste en dessous" in setup
     assert before == []
     assert chosen.startswith("✅ Les nouvelles signatures de contrat seront annoncées dans #signatures.")
     assert "Rachats → #rachats · Signatures → #signatures" in menu
@@ -2304,16 +2302,18 @@ def test_signings_channel_is_for_the_bot_owner_and_must_be_usable(shm_league):
     guild.channels[locked.id] = locked
 
     async def scenario():
-        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
-        refused = await set_signings_from_panel(bot, guild, admin, locked)
-        panel = (await open_panel(bot, guild, admin, draft=False)).view
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        refused = await pick_signings(i, locked)
+        # Le menu ne répond qu'à la personne qui a branché SHM.
+        stranger = await pick_signings(i, channel, user=FakeMember(guild, [], admin=True))
         bot.owner_ids = set()
-        other = await click(panel, button(panel, "signatures"), FakeInteraction(guild, admin))
-        return refused.last, other
-    refused, other = run(scenario())
+        other = await pick_signings(i, channel)
+        return refused.last, stranger, other
+    refused, stranger, other = run(scenario())
     assert refused.startswith("🔒 Le bot ne peut pas écrire dans #verrouillé")
+    assert stranger.sent == []
+    assert "seulement par" in other.last
     assert store.shm_channels(guild.id)["signings"] is None
-    assert other.response.modal is None and "seulement par" in other.last
 
 
 # Chaque sorte d'annonce SHM dans son salon, et le classement
