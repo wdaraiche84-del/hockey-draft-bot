@@ -95,6 +95,8 @@ CONFIG_COLUMNS = {
     "shm_waivers": "TEXT",
     # 1 quand les rachats déjà sur l'accueil SHM ont été retenus sans être annoncés.
     "shm_buyouts_primed": "INTEGER NOT NULL DEFAULT 0",
+    # 1 quand les signatures déjà sur l'accueil SHM ont été retenues sans être annoncées.
+    "shm_signings_primed": "INTEGER NOT NULL DEFAULT 0",
     # Un salon par sorte d'annonce SHM. NULL : le salon des transactions (le classement : aucun). 0 : arrêtées.
     "shm_waivers_channel_id": "INTEGER",
     "shm_buyouts_channel_id": "INTEGER",
@@ -553,7 +555,8 @@ class Store:
                 "ON CONFLICT (guild_id) DO UPDATE SET shm_primed = CASE WHEN shm_league IS excluded.shm_league "
                 "THEN shm_primed ELSE 0 END, shm_waivers = CASE WHEN shm_league IS excluded.shm_league "
                 "THEN shm_waivers ELSE NULL END, shm_buyouts_primed = CASE WHEN shm_league IS excluded.shm_league "
-                "THEN shm_buyouts_primed ELSE 0 END, shm_league = excluded.shm_league",
+                "THEN shm_buyouts_primed ELSE 0 END, shm_signings_primed = CASE WHEN shm_league IS excluded.shm_league "
+                "THEN shm_signings_primed ELSE 0 END, shm_league = excluded.shm_league",
                 (guild_id, slug),
             )
 
@@ -654,6 +657,14 @@ class Store:
     def set_shm_buyouts_primed(self, guild_id: int) -> None:
         with self.db:
             self.db.execute("UPDATE config SET shm_buyouts_primed = 1 WHERE guild_id = ?", (guild_id,))
+
+    def shm_signings_primed(self, guild_id: int) -> bool:
+        row = self.db.execute("SELECT shm_signings_primed FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return bool(row and row[0])
+
+    def set_shm_signings_primed(self, guild_id: int) -> None:
+        with self.db:
+            self.db.execute("UPDATE config SET shm_signings_primed = 1 WHERE guild_id = ?", (guild_id,))
 
     def is_announced(self, guild_id: int, fingerprint: str) -> bool:
         return self.db.execute(

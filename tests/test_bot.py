@@ -1730,7 +1730,7 @@ def test_shm_status_is_shown_in_the_league_menu(shm_league):
     before, ok, failing = run(scenario())
     assert "État : pas activées" in before
     assert "État : ligue `lnhs_2` (✅ lu à l'instant)" in ok
-    assert "Transactions → #transactions · Ballottage → #transactions · Rachats → #transactions · Classement → non" in ok
+    assert "Transactions → #transactions · Ballottage → #transactions · Contrats → #transactions · Classement → non" in ok
     assert "⚠️ Je n'arrive pas à joindre SHM" in failing
 
 
@@ -2130,6 +2130,142 @@ def test_buyout_still_on_the_home_page_after_a_restart_is_not_repeated(shm_leagu
     assert len(channel.texts()) == 1
 
 
+# Les signatures SHM, lues sur l'accueil de la ligue
+
+def signed_line(player, salary, years, level="NHL"):
+    return f"{player} ({level}) a signé un nouveau contrat de {salary}$ d'une durée de {years} ans."
+
+
+def test_signings_already_on_shm_are_quiet_then_new_ones_are_announced(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    nyi = FakeEmoji("NYI")
+    guild.emojis = [nyi]
+    # Des signatures déjà sur l'accueil quand la ligue est branchée : jamais annoncées.
+    site.add_home("NYI", "file-signature", signed_line("Matthew Barzal", "5 250 000", 8))
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        quiet = list(channel.texts())
+        site.add_home("MTL", "file-signature", signed_line("Josh Anderson", "2 000 000", 1, "AHL"))
+        # Le logo du club-école de NYI : l'équipe LNH a été apprise plus tôt sur l'accueil.
+        site.add_home("BRG", "file-signature", signed_line("David Rittich", "1 250 000", 7))
+        await bot.check_shm()
+        await bot.check_shm()
+        return quiet
+    quiet = run(scenario())
+    assert quiet == []
+    assert channel.texts() == [
+        f"✍️ **Signature** : {roles['Canadiens'].mention} signe **Josh Anderson** : 1 an à 2 000 000 $ par saison."
+        "\n-# Il joue dans la LAH.",
+        f"✍️ **Signature** : {nyi} {roles['Islanders'].mention} signe **David Rittich** : 7 ans à 1 250 000 $ "
+        "par saison.\n-# Il joue dans la LNH.",
+    ]
+    # Pas de notification : plusieurs joueurs signent souvent en même temps.
+    assert all(m == bot_module.NO_PINGS for m in channel.mentions())
+    assert [a for _, _, a, _ in store.log_entries(guild.id)].count("signature SHM") == 2
+
+
+def test_existing_league_does_not_flood_old_signings_after_the_update(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        # Comme un serveur branché avant cette mise à jour : les signatures n'ont jamais été retenues.
+        with store.db:
+            store.db.execute("UPDATE config SET shm_signings_primed = 0")
+        for i in range(5):
+            site.add_home("MTL", "file-signature", signed_line(f"Joueur {i}", "750 000", 1, "AHL"))
+        await bot.check_shm()
+        quiet = list(channel.texts())
+        site.add_home("MTL", "file-signature", signed_line("Cole Caufield", "7 850 000", 8))
+        await bot.check_shm()
+        return quiet
+    quiet = run(scenario())
+    assert quiet == []
+    assert len(channel.texts()) == 1 and "Cole Caufield" in channel.texts()[0]
+
+
+def test_signing_is_announced_with_its_image_and_shm_ratings(shm_league, monkeypatch):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    site.rosters["MTL"] = shm.parse_roster(SHM_ROSTER_STATS)
+    channel.attach_files = True
+    drawn = []
+    real = bot_module.contract_card.render_png
+
+    def spy(*args):
+        drawn.append(args)
+        return real(*args)
+    monkeypatch.setattr(bot_module.contract_card, "render_png", spy)
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.roster_requests.clear()
+        site.add_home("MTL", "file-signature", signed_line("Kevin Fiala", "6 000 000", 4))
+        await bot.check_shm()
+        reads = list(site.roster_requests)
+        await bot.check_shm()
+        return reads
+    reads = run(scenario())
+    # Seule la page « Effectifs » de l'équipe qui signe est lue, une seule fois.
+    assert reads == [("lnhs_2", "MTL")] and site.roster_requests == reads
+    message = list(channel.messages.values())[-1]
+    assert message.content.startswith(f"✍️ **Signature** : {roles['Canadiens'].mention} signe **Kevin Fiala**")
+    assert message.file is not None and message.file.filename == "signature.png"
+    assert message.file.fp.read(8) == b"\x89PNG\r\n\x1a\n"
+    kind, team, _, player, salary, years, line = drawn[0]
+    # Le nouveau contrat vient de l'accueil ; la position, l'âge et les cotes, de la page « Effectifs ».
+    assert (kind, team, player, salary, years) == ("signature", "MTL", "Kevin Fiala", "6 000 000", "4")
+    assert line.position == "AG/AD" and dict(line.ratings)["OA"] == "82"
+
+
+def test_signing_is_announced_in_text_when_the_image_or_shm_fails(shm_league, monkeypatch, caplog):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    channel.attach_files = True
+
+    def broken(*args):
+        raise RuntimeError("bogue imprévu dans l'image")
+    monkeypatch.setattr(bot_module.contract_card, "render_png", broken)
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        site.roster_error = shm.ShmError("SHM ne répond pas.")
+        site.add_home("MTL", "file-signature", signed_line("Kevin Fiala", "6 000 000", 4))
+        await bot.check_shm()
+        channel.refuse_files = True
+        monkeypatch.setattr(bot_module.contract_card, "render_png", lambda *args: b"png")
+        site.add_home("MTL", "file-signature", signed_line("Nick Suzuki", "7 875 000", 8))
+        await bot.check_shm()
+        await bot.check_shm()
+    with caplog.at_level(logging.ERROR):
+        run(scenario())
+    messages = list(channel.messages.values())
+    # Une annonce par signature, en texte, jamais en double.
+    assert [m.file for m in messages] == [None, None]
+    assert "Kevin Fiala" in messages[0].content and "Nick Suzuki" in messages[1].content
+    assert "Image de la signature impossible" in caplog.text
+
+
+def test_signings_go_to_the_contracts_channel_and_stop_with_it(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    contracts = FakeChannel("contrats")
+    guild.channels[contracts.id] = contracts
+
+    async def scenario():
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", buyouts=contracts)
+        site.add_home("MTL", "file-signature", signed_line("Kevin Fiala", "6 000 000", 4))
+        await bot.check_shm()
+        await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2", buyouts=None)
+        site.roster_requests.clear()
+        site.add_home("MTL", "file-signature", signed_line("Nick Suzuki", "7 875 000", 8))
+        await bot.check_shm()
+    run(scenario())
+    assert channel.texts() == []
+    assert len(contracts.texts()) == 1 and "Kevin Fiala" in contracts.texts()[0]
+    # Arrêtées : aucune page « Effectifs » lue pour rien.
+    assert site.roster_requests == []
+
+
 # Chaque sorte d'annonce SHM dans son salon, et le classement
 
 def test_each_kind_of_announcement_goes_to_its_own_channel(shm_league):
@@ -2145,7 +2281,7 @@ def test_each_kind_of_announcement_goes_to_its_own_channel(shm_league):
         await bot.check_shm()
         return i.last
     text = run(scenario())
-    assert "Ballottage : #ballottage" in text and "Rachats : #rachats" in text and "Classement : pas annoncé" in text
+    assert "Ballottage : #ballottage" in text and "Contrats : #rachats" in text and "Classement : pas annoncé" in text
     assert len(channel.texts()) == 1 and "Cole Caufield" in channel.texts()[0]
     assert len(waivers.texts()) == 1 and "Brendan Gallagher" in waivers.texts()[0]
     assert len(buyouts.texts()) == 1 and "Josh Anderson" in buyouts.texts()[0]

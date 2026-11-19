@@ -1,4 +1,4 @@
-"""Les annonces SHM autres que les transactions : ballottage, rachats et classement.
+"""Les annonces SHM autres que les transactions : ballottage, rachats, signatures et classement.
 
 Ce module écrit les messages. Il ne parle ni à SHM ni à Discord : il reçoit ce que le module
 `shm` a lu et les rôles du serveur, ce qui le rend facile à tester.
@@ -80,6 +80,25 @@ def bought_out(buyout: shm.Buyout, teams: dict[str, str], roles: list, emojis: d
         who = team_label(buyout.team, teams, roles, emojis)
     return (f"💸 **Rachat** : {who} rachète le contrat de **{escape_markdown(buyout.player)}** "
             f"(montant du rachat : {escape_markdown(buyout.salary)} $).")
+
+
+LEVELS = {"NHL": "dans la LNH", "AHL": "dans la LAH"}
+
+
+def signing_team(signing: shm.Signing, teams: dict[str, str], roles: list, emojis: dict[str, str]) -> str:
+    if shm.known_team(signing.team, teams.get(signing.team)) is None:
+        # Un club-école dont l'équipe LNH est inconnue : on le nomme sans deviner.
+        return f"Le club-école **{escape_markdown(teams.get(signing.team) or signing.team)}**"
+    return team_label(signing.team, teams, roles, emojis)
+
+
+def signed(signing: shm.Signing, teams: dict[str, str], roles: list, emojis: dict[str, str]) -> str:
+    """« ✍️ Signature : @Canadiens signe Jordan Kyrou : 2 ans à 3 500 000 $ par saison. »"""
+    years = f"{signing.years} an{'s' if signing.years not in ('0', '1') else ''}"
+    level = LEVELS.get(signing.level)
+    return (f"✍️ **Signature** : {signing_team(signing, teams, roles, emojis)} signe "
+            f"**{escape_markdown(signing.player)}** : {years} à {escape_markdown(signing.salary)} $ par saison."
+            + (f"\n-# Il joue {level}." if level else ""))
 
 
 # Le classement : quelques messages que le bot modifie après chaque simulation.
