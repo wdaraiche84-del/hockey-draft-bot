@@ -101,6 +101,8 @@ CONFIG_COLUMNS = {
     "shm_waivers_channel_id": "INTEGER",
     "shm_buyouts_channel_id": "INTEGER",
     "shm_standings_channel_id": "INTEGER",
+    # Le salon des signatures de contrat. NULL ou 0 : pas annoncées (choisi à part, bouton « Salon des signatures »).
+    "shm_signings_channel_id": "INTEGER",
     # Les messages du classement publiés : {"channel": id, "messages": [[id, texte], ...]} (JSON).
     "shm_standings_messages": "TEXT",
     # Le dernier classement lu, les rangs et les places gagnées ou perdues à la dernière simulation (JSON).
@@ -130,7 +132,7 @@ PICK_COLUMNS = {
 DRAFT_CHANNELS = ("board", "round1", "round2", "guide", "recap", "owners", "trades")
 
 # Les sortes d'annonces SHM, chacune dans son propre salon si on veut.
-SHM_KINDS = ("trades", "waivers", "buyouts", "standings")
+SHM_KINDS = ("trades", "waivers", "buyouts", "signings", "standings")
 
 
 def normalize(text: str) -> str:
@@ -592,13 +594,21 @@ class Store:
     def shm_channels(self, guild_id: int) -> dict[str, int | None]:
         """Le salon de chaque sorte d'annonce SHM, ou None si elle est arrêtée."""
         row = self.db.execute(
-            "SELECT trades_channel_id, shm_waivers_channel_id, shm_buyouts_channel_id, shm_standings_channel_id "
-            "FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
-        trades, waivers, buyouts, standings = row if row else (None, None, None, None)
+            "SELECT trades_channel_id, shm_waivers_channel_id, shm_buyouts_channel_id, shm_signings_channel_id, "
+            "shm_standings_channel_id FROM config WHERE guild_id = ?", (guild_id,)).fetchone()
+        trades, waivers, buyouts, signings, standings = row if row else (None, None, None, None, None)
         return {"trades": trades or None,
                 "waivers": trades if waivers is None else waivers or None,
                 "buyouts": trades if buyouts is None else buyouts or None,
+                "signings": signings or None,
                 "standings": standings or None}
+
+    def set_shm_signings_channel(self, guild_id: int, channel_id: int | None) -> None:
+        """Le salon des signatures. None les arrête."""
+        with self.db:
+            self.db.execute("INSERT INTO config (guild_id, shm_signings_channel_id) VALUES (?, ?) "
+                            "ON CONFLICT (guild_id) DO UPDATE SET shm_signings_channel_id = excluded.shm_signings_channel_id",
+                            (guild_id, channel_id or 0))
 
     def set_shm_channels(self, guild_id: int, trades: int, waivers: int | None, buyouts: int | None,
                          standings: int | None) -> None:

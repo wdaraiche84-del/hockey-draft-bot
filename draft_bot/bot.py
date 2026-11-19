@@ -749,7 +749,7 @@ class DraftBot(discord.Client):
                 if buyouts is not None:
                     await self.publish_buyouts(guild_id, channels["buyouts"], buyouts, teams_known)
                 if signings is not None:
-                    await self.publish_signings(guild_id, channels["buyouts"], signings, teams_known, signers)
+                    await self.publish_signings(guild_id, channels["signings"], signings, teams_known, signers)
                 if standings is not None and channels["standings"] is not None:
                     await self.publish_standings(guild_id, channels["standings"], standings)
                 problems = errors + ([f"Le bot ne peut pas écrire dans {', '.join(locked)}."] if locked else [])
@@ -815,7 +815,7 @@ class DraftBot(discord.Client):
 
     def signing_to_announce(self, signing: shm.Signing, guild_ids: list[int]) -> bool:
         key = shm.signing_key(signing)
-        return any(self.store.shm_signings_primed(g) and self.store.shm_channels(g)["buyouts"]
+        return any(self.store.shm_signings_primed(g) and self.store.shm_channels(g)["signings"]
                    and not self.store.is_announced(g, key) for g in guild_ids)
 
     async def find_farms(self, slug: str, buyouts: list, teams: dict[str, str], guild_ids: list[int],
@@ -874,7 +874,8 @@ class DraftBot(discord.Client):
         """Annonce les signatures de l'accueil pas encore annoncées, de la plus ancienne à la plus récente.
 
         La première lecture retient les signatures déjà sur l'accueil sans les annoncer. Elles vont
-        dans le salon des contrats (le même que les rachats)."""
+        dans leur propre salon (bouton « Salon des signatures ») ; sans salon, elles sont retenues
+        sans être annoncées."""
         guild = self.get_guild(guild_id)
         posted = 0
         async with self.locks[guild_id]:
@@ -2239,8 +2240,8 @@ class ShmModal(BotModal):
                                 "Chaque nouvelle transaction y sera annoncée.")
         self.waivers = self.ask("Salon du ballottage", select("waivers", False),
                                 "Laisse vide pour ne pas annoncer le ballottage.")
-        self.buyouts = self.ask("Salon des contrats", select("buyouts", False),
-                                "Signatures et rachats. Laisse vide pour ne pas les annoncer.")
+        self.buyouts = self.ask("Salon des rachats", select("buyouts", False),
+                                "Laisse vide pour ne pas annoncer les rachats.")
         self.standings = self.ask("Salon du classement", select("standings", False),
                                   "Le classement y est publié et mis à jour tout seul. Laisse vide si tu n'en veux pas.")
 
@@ -2255,8 +2256,52 @@ class ShmModal(BotModal):
                          "standings": chosen(self.standings)})
 
 
-SHM_KIND_NAMES = {"trades": "transactions", "waivers": "ballottage", "buyouts": "contrats",
-                  "standings": "classement"}
+class SigningsModal(BotModal):
+    """Le salon des signatures SHM : à part, parce que la fenêtre des annonces SHM est pleine
+    (Discord permet au plus 5 champs)."""
+
+    def __init__(self, bot: DraftBot, guild_id: int):
+        super().__init__(bot, SIGNINGS_BUTTON)
+        channel_id = bot.store.shm_channels(guild_id)["signings"]
+        default = [discord.Object(id=channel_id, type=discord.TextChannel)] if channel_id else []
+        self.channel = self.ask(SIGNINGS_BUTTON, discord.ui.ChannelSelect(
+            channel_types=[discord.ChannelType.text], default_values=default, min_values=0, required=False),
+            "Chaque nouvelle signature de contrat y sera annoncée. Laisse vide pour ne pas les annoncer.")
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        target = None
+        if self.channel.values:
+            target = interaction.guild.get_channel(self.channel.values[0].id) or False
+        await set_signings_channel(self.bot, interaction, target)
+
+
+async def set_signings_channel(bot: DraftBot, interaction: discord.Interaction,
+                               target: discord.TextChannel | None | bool) -> None:
+    """Choisit (ou arrête, avec None) le salon des signatures. False : un salon que le bot ne voit pas."""
+    guild = interaction.guild
+    if not bot.is_owner_id(interaction.user.id):
+        await reply(interaction, shm_owner_only(bot))
+        return
+    if target is False:
+        await reply(interaction, "Salon des signatures introuvable. Le bot voit-il ce salon ? Réessaie dans `/admin`.")
+        return
+    if target is not None and not bot_can_post(target, guild):
+        await reply(interaction, f"🔒 Le bot ne peut pas écrire dans {target.mention}. Corrige ses permissions ou "
+                    "choisis un autre salon.")
+        return
+    bot.store.set_shm_signings_channel(guild.id, target.id if target else None)
+    bot.store.add_log(guild.id, interaction.user.id, "signatures SHM", f"#{target.name}" if target else "arrêtées")
+    if target is None:
+        await reply(interaction, "🔕 Les signatures ne seront plus annoncées.")
+    else:
+        await reply(interaction, f"✅ Les nouvelles signatures de contrat seront annoncées dans {target.mention}. "
+                    "Celles déjà sur SHM ne sont pas réannoncées.")
+    await bot.refresh_panels(guild)
+
+
+SHM_KIND_NAMES = {"trades": "transactions", "waivers": "ballottage", "buyouts": "rachats",
+                  "signings": "signatures", "standings": "classement"}
+SIGNINGS_BUTTON = "Salon des signatures"
 
 
 async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: str,
@@ -2322,8 +2367,8 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
     if feed is not None:
         await bot.publish_buyouts(guild.id, chosen["buyouts"], shm.feed_buyouts(feed, bot.shm_farms[slug]),
                                   page.teams)
-        await bot.publish_signings(guild.id, chosen["buyouts"], shm.feed_signings(feed, bot.shm_farms[slug]),
-                                   page.teams)
+        await bot.publish_signings(guild.id, bot.shm_channels(guild.id)[0]["signings"],
+                                   shm.feed_signings(feed, bot.shm_farms[slug]), page.teams)
     if standings is not None:
         await bot.publish_standings(guild.id, chosen["standings"], standings)
     await bot.shm_ok(guild.id, channel)
@@ -2338,6 +2383,9 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
     for kind in ("trades", "waivers", "buyouts", "standings"):
         target = chosen[kind]
         lines.append(f"• {SHM_KIND_NAMES[kind].capitalize()} : " + (target.mention if target else "pas annoncé"))
+    signings = bot.shm_channels(guild.id)[0]["signings"]
+    lines.append("• Signatures : " + (signings.mention if signings else
+                                      f"pas annoncé (bouton ✍️ **{SIGNINGS_BUTTON}** dans `/admin`)"))
     if standings_error:
         lines.append(f"⚠️ Classement pas encore publié : {standings_error} Je réessaie tout seul.")
     lines.append(f"Ce qui arrive sur SHM est annoncé moins de {SHM_CHECK_MINUTES} minutes plus tard. "
@@ -2564,6 +2612,8 @@ class AdminPanel(discord.ui.View):
         if self.screen == MENU_SCREEN:
             self.add("draft", DRAFT_BUTTON, self.show_draft, style=primary, emoji="🏒", row=0)
             self.add("shm", SHM_BUTTON, self.open_shm, emoji="🔄", row=0)
+            if self.bot.store.shm_league(guild.id):
+                self.add("signatures", SIGNINGS_BUTTON, self.open_signings, emoji="✍️", row=0)
             return panel_text(self.bot, guild, MENU_SCREEN)
         if self.screen == OPTIONS_SCREEN:
             self.add("salons", CHANGE_CHANNELS, self.show_salons, emoji="📺", row=0)
@@ -2688,6 +2738,15 @@ class AdminPanel(discord.ui.View):
             await reply(interaction, SHM_NOT_CONFIGURED)
             return
         await interaction.response.send_modal(ShmModal(self.bot, interaction.guild_id))
+
+    async def open_signings(self, interaction: discord.Interaction) -> None:
+        if not self.bot.is_owner_id(interaction.user.id):
+            await reply(interaction, shm_owner_only(self.bot))
+            return
+        if not self.bot.store.shm_league(interaction.guild_id):
+            await reply(interaction, f"Branche d'abord ta ligue SHM : bouton 🔄 **{SHM_BUTTON}**.")
+            return
+        await interaction.response.send_modal(SigningsModal(self.bot, interaction.guild_id))
 
 
 HELP_TEXT = """\
