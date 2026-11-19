@@ -22,6 +22,7 @@ from . import transactions
 from . import formatting as fmt
 from . import moves
 from . import shm
+from . import contract_card
 from . import trade_card
 from . import wheel
 from .storage import DRAFT_CHANNELS, AlreadyRunning, Pick, PickError, Player, Store, normalize, team_display
@@ -720,9 +721,13 @@ class DraftBot(discord.Client):
         feed, complete = await self.read_feed(slug)
         claims = shm.feed_claims(feed) if feed is not None else {}
         buyouts = shm.feed_buyouts(feed, self.shm_farms[slug]) if feed is not None else None
+        signings = shm.feed_signings(feed, self.shm_farms[slug]) if feed is not None else None
         teams_known = (waivers.teams if waivers is not None else {}) | (teams if trades is not None else {})
+        guild_ids = [g for g, _ in followers]
         if buyouts:
-            buyouts = await self.find_farms(slug, buyouts, teams_known, [g for g, _ in followers])
+            buyouts = await self.find_farms(slug, buyouts, teams_known, guild_ids, self.buyout_to_announce)
+        if signings:
+            signings = await self.find_farms(slug, signings, teams_known, guild_ids, self.signing_to_announce)
         # Le classement n'est lu que si un serveur veut le publier.
         if any(self.store.shm_channels(guild_id)["standings"] for guild_id, _ in followers):
             try:
@@ -731,6 +736,7 @@ class DraftBot(discord.Client):
                 log.warning("Classement SHM illisible pour la ligue %s : %s", slug, error)
                 errors.append(str(error))
         players = await self.trade_players(slug, trades, followers) if trades is not None else {}
+        signers = await self.signing_players(slug, signings, teams_known, guild_ids) if signings else {}
         for guild_id, channel_id in followers:
             try:
                 channels, locked = self.shm_channels(guild_id)
@@ -742,6 +748,8 @@ class DraftBot(discord.Client):
                     await self.publish_waivers(guild_id, channels["waivers"], waivers, claims, complete)
                 if buyouts is not None:
                     await self.publish_buyouts(guild_id, channels["buyouts"], buyouts, teams_known)
+                if signings is not None:
+                    await self.publish_signings(guild_id, channels["buyouts"], signings, teams_known, signers)
                 if standings is not None and channels["standings"] is not None:
                     await self.publish_standings(guild_id, channels["standings"], standings)
                 problems = errors + ([f"Le bot ne peut pas écrire dans {', '.join(locked)}."] if locked else [])
@@ -801,20 +809,24 @@ class DraftBot(discord.Client):
                 players.setdefault(name, line)
         return players
 
-    async def find_farms(self, slug: str, buyouts: list[shm.Buyout], teams: dict[str, str],
-                         guild_ids: list[int]) -> list[shm.Buyout]:
-        """Remplace le club-école d'un rachat à annoncer par son équipe LNH.
+    def buyout_to_announce(self, buyout: shm.Buyout, guild_ids: list[int]) -> bool:
+        key = shm.buyout_key(buyout)
+        return any(self.store.shm_buyouts_primed(g) and not self.store.is_announced(g, key) for g in guild_ids)
+
+    def signing_to_announce(self, signing: shm.Signing, guild_ids: list[int]) -> bool:
+        key = shm.signing_key(signing)
+        return any(self.store.shm_signings_primed(g) and self.store.shm_channels(g)["buyouts"]
+                   and not self.store.is_announced(g, key) for g in guild_ids)
+
+    async def find_farms(self, slug: str, buyouts: list, teams: dict[str, str], guild_ids: list[int],
+                         to_announce: Callable[[object, list[int]], bool]) -> list:
+        """Remplace le club-école d'un rachat ou d'une signature à annoncer par son équipe LNH.
 
         Si l'accueil ne l'a pas dit, le bot lit les pages « Effectifs » des équipes jusqu'à trouver
         à qui appartient ce club-école (une seule fois par équipe tant que le bot tourne)."""
         farms = self.shm_farms[slug]
-
-        def to_announce(buyout):
-            key = shm.buyout_key(buyout)
-            return any(self.store.shm_buyouts_primed(g) and not self.store.is_announced(g, key) for g in guild_ids)
-
         missing = {b.team for b in buyouts if shm.known_team(b.team, None) is None and b.team not in farms
-                   and to_announce(b)}
+                   and to_announce(b, guild_ids)}
         for farm in sorted(missing):
             for code in teams:
                 if farm in farms:
@@ -830,6 +842,87 @@ class DraftBot(discord.Client):
                 if found:
                     farms[found[0]] = code
         return [replace(b, team=farms[b.team]) if b.team in farms else b for b in buyouts]
+
+    async def signing_players(self, slug: str, signings: list[shm.Signing], teams: dict[str, str],
+                              guild_ids: list[int]) -> dict[tuple[str, str], transactions.PlayerLine]:
+        """La ligne SHM (position, âge, cotes) des joueurs qui viennent de signer, par (équipe, nom).
+
+        Le bot lit la page « Effectifs » de leurs équipes seulement. Si SHM ne répond pas, les
+        signatures sont annoncées quand même, sans les cotes : rien n'est jamais bloqué."""
+        codes: list[str] = []
+        for signing in signings:
+            if (self.signing_to_announce(signing, guild_ids) and signing.team not in codes
+                    and shm.known_team(signing.team, teams.get(signing.team)) is not None):
+                codes.append(signing.team)
+        found: dict[tuple[str, str], transactions.PlayerLine] = {}
+        for code in codes[:SHM_MAX_ROSTERS]:
+            try:
+                roster = await self.shm.roster(slug, code)
+            except shm.ShmError as error:
+                log.warning("Page « Effectifs » %s illisible dans la ligue %s : %s", code, slug, error)
+                break
+            except Exception:
+                log.exception("Lignes des joueurs impossibles à lire (équipe %s, ligue %s)", code, slug)
+                break
+            for name, line in roster.items():
+                found[(code, name)] = line
+        return found
+
+    async def publish_signings(self, guild_id: int, channel: discord.TextChannel | None,
+                               signings: list[shm.Signing], teams: dict[str, str],
+                               players: dict[tuple[str, str], transactions.PlayerLine] | None = None) -> int:
+        """Annonce les signatures de l'accueil pas encore annoncées, de la plus ancienne à la plus récente.
+
+        La première lecture retient les signatures déjà sur l'accueil sans les annoncer. Elles vont
+        dans le salon des contrats (le même que les rachats)."""
+        guild = self.get_guild(guild_id)
+        posted = 0
+        async with self.locks[guild_id]:
+            primed = self.store.shm_signings_primed(guild_id)
+            roles, emojis = team_roles(guild), guild_emojis(guild)
+            for signing in reversed(signings):
+                key = shm.signing_key(signing)
+                if self.store.is_announced(guild_id, key):
+                    continue
+                if primed and channel is not None:
+                    line = (players or {}).get((signing.team, normalize(signing.player)))
+                    try:
+                        await self.send_signing(channel, guild, signing, teams, roles, emojis, line)
+                    except discord.HTTPException:
+                        log.exception("Annonce d'une signature impossible sur le serveur %s", guild_id)
+                        continue
+                    posted += 1
+                    self.store.add_log(guild_id, None, "signature SHM",
+                                       f"{signing.player} ({signing.team}, {signing.years} ans, {signing.salary} $)")
+                self.store.mark_announced(guild_id, key)
+            if not primed:
+                self.store.set_shm_signings_primed(guild_id)
+        return posted
+
+    async def send_signing(self, channel: discord.TextChannel, guild: discord.Guild, signing: shm.Signing,
+                           teams: dict[str, str], roles: list, emojis: dict[str, str],
+                           line: transactions.PlayerLine | None) -> None:
+        """Envoie l'annonce d'une signature : la phrase courte avec l'image du contrat. Si l'image ne
+        peut pas être faite ou envoyée, l'annonce part en texte seulement."""
+        text = moves.signed(signing, teams, roles, emojis)
+        card = None
+        if bot_can_attach(channel, guild):
+            team = shm.known_team(signing.team, teams.get(signing.team))
+            try:
+                card = await asyncio.to_thread(contract_card.render_png, "signature", team, teams.get(signing.team),
+                                               signing.player, signing.salary, signing.years, line)
+            except Exception:
+                # L'image est un plus : une erreur imprévue n'empêche jamais l'annonce.
+                log.exception("Image de la signature impossible à faire (serveur %s)", guild.id)
+        if card is not None:
+            try:
+                # Pas de notification : plusieurs joueurs signent souvent en même temps.
+                await channel.send(text, file=discord.File(io.BytesIO(card), filename="signature.png"),
+                                   allowed_mentions=NO_PINGS)
+                return
+            except discord.HTTPException as error:
+                log.warning("Image de la signature refusée par Discord (serveur %s) : %s", guild.id, error)
+        await channel.send(text, allowed_mentions=NO_PINGS)
 
     async def read_feed(self, slug: str) -> tuple[list[shm.FeedRow] | None, bool]:
         """Les « Changements par équipe » de l'accueil (ou None), et s'ils couvrent tout depuis la
@@ -2116,7 +2209,8 @@ def bot_can_attach(channel: discord.TextChannel, guild: discord.Guild) -> bool:
 
 def shm_owner_only(bot: "DraftBot") -> str:
     who = f"**{escape_markdown(bot.owner_name)}**" if bot.owner_name else "le créateur du bot"
-    return (f"🔒 Les annonces SHM (transactions, ballottage, rachats, classement) sont branchées seulement par {who}, "
+    return (f"🔒 Les annonces SHM (transactions, ballottage, signatures, rachats, classement) sont branchées "
+            f"seulement par {who}, "
             f"le créateur du bot : il doit relier le compte SHM du bot à votre ligue.\n{bot.contact_text()}")
 
 
@@ -2145,8 +2239,8 @@ class ShmModal(BotModal):
                                 "Chaque nouvelle transaction y sera annoncée.")
         self.waivers = self.ask("Salon du ballottage", select("waivers", False),
                                 "Laisse vide pour ne pas annoncer le ballottage.")
-        self.buyouts = self.ask("Salon des rachats", select("buyouts", False),
-                                "Laisse vide pour ne pas annoncer les rachats.")
+        self.buyouts = self.ask("Salon des contrats", select("buyouts", False),
+                                "Signatures et rachats. Laisse vide pour ne pas les annoncer.")
         self.standings = self.ask("Salon du classement", select("standings", False),
                                   "Le classement y est publié et mis à jour tout seul. Laisse vide si tu n'en veux pas.")
 
@@ -2161,7 +2255,8 @@ class ShmModal(BotModal):
                          "standings": chosen(self.standings)})
 
 
-SHM_KIND_NAMES = {"trades": "transactions", "waivers": "ballottage", "buyouts": "rachats", "standings": "classement"}
+SHM_KIND_NAMES = {"trades": "transactions", "waivers": "ballottage", "buyouts": "contrats",
+                  "standings": "classement"}
 
 
 async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: str,
@@ -2227,6 +2322,8 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
     if feed is not None:
         await bot.publish_buyouts(guild.id, chosen["buyouts"], shm.feed_buyouts(feed, bot.shm_farms[slug]),
                                   page.teams)
+        await bot.publish_signings(guild.id, chosen["buyouts"], shm.feed_signings(feed, bot.shm_farms[slug]),
+                                   page.teams)
     if standings is not None:
         await bot.publish_standings(guild.id, chosen["standings"], standings)
     await bot.shm_ok(guild.id, channel)
@@ -2349,7 +2446,7 @@ def menu_text(bot: DraftBot, guild: discord.Guild) -> str:
         "Que veux-tu faire ?",
         "",
         f"🏒 **{DRAFT_BUTTON}** : {draft_summary(bot, guild)}",
-        "🔄 **Annonces SHM** : rachats, ballottages, transactions et classement publiés tout seuls",
+        "🔄 **Annonces SHM** : transactions, signatures, rachats, ballottages et classement publiés tout seuls",
         f"　État : {shm_text(bot, guild)}",
         "",
         "Clique sur un bouton ci-dessous.",
@@ -2611,7 +2708,7 @@ Tout le reste (échanger un choix, délai, journal, changer les salons, les joue
 dans **Plus d'options**. Dans **Changer les salons**, chaque salon du repêchage a son rôle (sélection des \
 joueurs, ronde 1, ronde 2, guide, centrale, attributions, échanges) ; **Remplir automatiquement** les trouve \
 d'après leur nom.
-• **Annonces SHM auto** : rachats, ballottages, transactions et classement publiés tout seuls."""
+• **Annonces SHM auto** : transactions, signatures, rachats, ballottages et classement publiés tout seuls."""
 
 
 def register_commands(bot: DraftBot) -> None:

@@ -141,6 +141,35 @@ def test_buyouts_of_the_home_page_find_the_nhl_team_of_a_farm_club():
     assert len({shm.buyout_key(b) for b in buyouts}) == 5
 
 
+def test_signings_of_the_home_page():
+    # Les lignes exactes de l'accueil SHM (copiées par William le 2026-11-19).
+    rows = [
+        shm.FeedRow("BRG", "file-signature",
+                    "Jack Roslovic (AHL) a signé un nouveau contrat de 2 000 000$ d'une durée de 1 ans."),
+        shm.FeedRow("NYI", "arrow-circle-down", "Jack Roslovic a été descendu en AHL"),
+        shm.FeedRow("NYI", "file-signature",
+                    "Matthew Barzal (NHL) a signé un nouveau contrat de 5\u00a0250\u00a0000$ d'une durée de 8 ans."),
+        shm.FeedRow("TBL", "x", "Anthony Cirelli (NHL) a signé un nouveau contrat de 5 000 000 $ d’une durée de 3 ans."),
+        shm.FeedRow("COL", "x", "Branislav Konr\ufffdd a signé un contrat de 750 000$ d'une durée de 1 an."),
+        shm.FeedRow("BRG", "x", "Mathis DouzeAns (AHL) a signé un nouveau contrat de 750 000$ d'une durée de 12 ans."),
+        shm.FeedRow("NYI", "gavel", "Ethan Bear a été racheté au salaire de 775 000$"),
+        shm.FeedRow("NYI", "list", "Alignement mis à jour"),
+        shm.FeedRow("", "x", "Sans Logo (NHL) a signé un nouveau contrat de 1 000 000$ d'une durée de 1 ans."),
+    ]
+    farms = {}
+    signings = shm.feed_signings(rows, farms)
+    assert [(s.player, s.level, s.salary, s.years, s.team) for s in signings] == [
+        ("Jack Roslovic", "AHL", "2 000 000", "1", "NYI"), ("Matthew Barzal", "NHL", "5 250 000", "8", "NYI"),
+        ("Anthony Cirelli", "NHL", "5 000 000", "3", "TBL"), ("Branislav Konr\ufffdd", "", "750 000", "1", "COL"),
+        ("Mathis DouzeAns", "AHL", "750 000", "12", "NYI")]
+    assert farms == {"BRG": "NYI"}
+    assert len({shm.signing_key(s) for s in signings}) == 5
+    # Une signature n'a jamais la même empreinte qu'un rachat.
+    assert not {shm.signing_key(s) for s in signings} & {shm.buyout_key(b) for b in shm.feed_buyouts(rows, {})}
+    # Le fichier d'accueil des tests n'a aucune signature : rien n'est inventé.
+    assert shm.feed_signings(shm.parse_feed(HOME), {}) == []
+
+
 def test_roster_page_gives_the_farm_club():
     assert shm.parse_farm(ROSTER, "ARI") == ("TUS", "Tucson Roadrunners")
     # Une page sans club-école (ou sans joueurs) ne donne rien plutôt que de deviner.

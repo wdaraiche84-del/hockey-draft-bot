@@ -3,7 +3,8 @@
 Le bot se connecte à SHM avec son propre compte (SHM_USERNAME et SHM_PASSWORD dans .env).
 Le commissaire d'une ligue ajoute ce compte comme membre de sa ligue, sans équipe. Le bot lit
 alors toutes les quelques minutes la page « Historique des transactions », la page
-« Ballottage » et les « Changements par équipe » de l'accueil, et annonce ce qui est nouveau.
+« Ballottage » et les « Changements par équipe » de l'accueil (rachats et signatures), et annonce
+ce qui est nouveau.
 
 Ce module lit la page et parle à SHM. Il ne connaît rien de Discord : les transactions qu'il
 rend sont celles du module `transactions`, qui trouve les rôles et écrit les annonces.
@@ -403,22 +404,69 @@ def feed_buyouts(rows: list[FeedRow], farms: dict[str, str]) -> list[Buyout]:
         match = BOUGHT_OUT.match(row.text)
         if not match:
             continue
-        player, team = match.group(1).strip(), row.team
-        if known_team(team, None) is None:
-            name = normalize(player)
-            parent = next((other.team for other in rows if other.team != team and player_of(other.text) == name
-                           and known_team(other.team, None)), None)
-            if parent:
-                farms[team] = parent
-            team = farms.get(team, team)
-        salary = " ".join(match.group(2).replace("\u00a0", " ").replace("\u202f", " ").split())
-        found.append(Buyout(player, salary, team, row.text))
+        player = match.group(1).strip()
+        found.append(Buyout(player, clean_amount(match.group(2)), parent_team(rows, player, row.team, farms), row.text))
     return found
 
 
 def buyout_key(buyout: Buyout) -> str:
     """L'empreinte d'un rachat : le même joueur racheté au même salaire n'est annoncé qu'une fois."""
     return "rachat:" + hashlib.sha256(normalize(buyout.text).encode()).hexdigest()[:32]
+
+
+SIGNED = re.compile(r"^(.+?)(?:\s*\((NHL|AHL|LNH|LAH)\))?\s+a signé un (?:nouveau )?contrat de "
+                    r"([\d\s\u00a0\u202f.,]+?)\s*\$\s*d.une durée de (\d{1,2}) ans?\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class Signing:
+    player: str
+    # « NHL » ou « AHL » : où joue le joueur dans l'organisation, si SHM le dit.
+    level: str
+    salary: str
+    years: str
+    # Le code de l'équipe LNH, ou celui de son club-école si l'accueil ne dit pas à qui il appartient.
+    team: str
+    text: str
+
+
+def clean_amount(text: str) -> str:
+    """« 1\u00a0000\u00a0000 » donne « 1 000 000 »."""
+    return " ".join(text.replace("\u00a0", " ").replace("\u202f", " ").split())
+
+
+def parent_team(rows: list[FeedRow], player: str, team: str, farms: dict[str, str]) -> str:
+    """L'équipe LNH d'un logo de l'accueil. SHM montre parfois le logo du club-école (« BRG ») :
+    une autre ligne sur le même joueur avec un logo LNH (« David Rittich a été descendu en AHL »,
+    NYI) donne l'équipe, et ce club-école est retenu dans `farms` pour la suite."""
+    if known_team(team, None) is not None:
+        return team
+    name = normalize(player)
+    parent = next((other.team for other in rows if other.team != team and player_of(other.text) == name
+                   and known_team(other.team, None)), None)
+    if parent:
+        farms[team] = parent
+    return farms.get(team, team)
+
+
+def feed_signings(rows: list[FeedRow], farms: dict[str, str]) -> list[Signing]:
+    """Les contrats signés de l'accueil (« X (NHL) a signé un nouveau contrat de 1 000 000$ d'une
+    durée de 2 ans. »), le plus récent en premier."""
+    found = []
+    for row in rows:
+        match = SIGNED.match(row.text)
+        if not match or not row.team:
+            continue
+        player = match.group(1).strip()
+        level = (match.group(2) or "").upper().replace("LNH", "NHL").replace("LAH", "AHL")
+        found.append(Signing(player, level, clean_amount(match.group(3)), match.group(4),
+                             parent_team(rows, player, row.team, farms), row.text))
+    return found
+
+
+def signing_key(signing: Signing) -> str:
+    """L'empreinte d'une signature : la même ligne de l'accueil n'est annoncée qu'une fois."""
+    return "contrat:" + hashlib.sha256(normalize(signing.text).encode()).hexdigest()[:32]
 
 
 def parse_farm(html: str, code: str) -> tuple[str, str] | None:
