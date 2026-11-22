@@ -435,3 +435,37 @@ def test_roster_page_asking_to_log_in_is_detected():
     login = (Path(__file__).parent / "fixtures" / "shm_connexion.html").read_text(encoding="utf-8")
     with pytest.raises(shm.LoginNeeded):
         shm.parse_roster(login)
+
+
+def test_moves_of_the_home_page_are_nhl_call_ups_and_ahl_send_downs_only():
+    rows = shm.parse_feed(HOME)
+    found = shm.feed_moves(rows, rows, {})
+    # Les juniors (« (JNR) a été monté en AHL ») et le capitaine LAH ne sont pas des mouvements AHL/NHL.
+    assert [(m.player, m.direction, m.team) for m in found] == [
+        ("David Rittich", "down", "NYI"), ("Julien Gauthier", "up", "NYI"),
+        ("Tobias Bjornfot", "up", "FLA"), ("Jonah Gadjovich", "down", "FLA")]
+    # Seules les nouvelles lignes comptent ; le logo d'un club-école connu donne l'équipe LNH.
+    farm = [shm.FeedRow("BRG", "arrow-circle-up", "Ethan Bear a été monté en NHL.")]
+    assert shm.feed_moves(farm, farm, {"BRG": "NYI"}) == [
+        shm.Move("Ethan Bear", "up", "NYI", "Ethan Bear a été monté en NHL.")]
+    odd = [shm.FeedRow("NYI", "x", "Jean Tremblay a été descendu en NHL"),
+           shm.FeedRow("NYI", "x", "Jean Tremblay a été monté en AHL"),
+           shm.FeedRow("", "x", "Jean Tremblay a été monté en NHL")]
+    assert shm.feed_moves(odd, odd, {}) == []
+
+
+def test_new_rows_of_the_home_page():
+    row = lambda text: shm.FeedRow("NYI", "list", text)
+    before = [row(f"ligne {i}") for i in range(30, 0, -1)]
+    # Première lecture : rien n'est nouveau. Rien n'a changé : rien de nouveau.
+    assert shm.feed_new_rows([], before) == ([], True)
+    assert shm.feed_new_rows(before, list(before)) == ([], True)
+    # Deux lignes arrivent en haut et poussent les deux plus vieilles.
+    now = [row("b"), row("a")] + before[:28]
+    assert shm.feed_new_rows(before, now) == ([row("b"), row("a")], True)
+    # Les mêmes lignes répétées (« Alignement mis à jour ») : seules les vraies nouvelles comptent.
+    same = [row("Alignement mis à jour")] * 3 + [row("x")]
+    assert shm.feed_new_rows(same, [row("Alignement mis à jour")] + same[:3]) == ([row("Alignement mis à jour")], True)
+    # Plus de 30 actions entre deux lectures : tout est rendu, mais pas sûr.
+    gap = [row(f"nouvelle {i}") for i in range(30)]
+    assert shm.feed_new_rows(before, gap) == (gap, False)

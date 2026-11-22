@@ -1,4 +1,4 @@
-"""Les annonces SHM autres que les transactions : ballottage, rachats, signatures et classement.
+"""Les annonces SHM autres que les transactions : ballottage, rachats, signatures, mouvements et classement.
 
 Ce module écrit les messages. Il ne parle ni à SHM ni à Discord : il reçoit ce que le module
 `shm` a lu et les rôles du serveur, ce qui le rend facile à tester.
@@ -99,6 +99,25 @@ def signed(signing: shm.Signing, teams: dict[str, str], roles: list, emojis: dic
     return (f"✍️ **Signature** : {signing_team(signing, teams, roles, emojis)} signe "
             f"**{escape_markdown(signing.player)}** : {years} à {escape_markdown(signing.salary)} $ par saison."
             + (f"\n-# Il joue {level}." if level else ""))
+
+
+# Les mouvements de personnel : les joueurs montés dans la LNH ou descendus dans la LAH.
+
+MOVE_LINES = {"up": "⬆️ **{player}** est rappelé de la LAH.",
+              "down": "⬇️ **{player}** est renvoyé dans la LAH."}
+
+
+def moved(team: str, team_moves: list[shm.Move], teams: dict[str, str], roles: list, emojis: dict[str, str]) -> str:
+    """Les mouvements d'une équipe, du plus ancien au plus récent, en un seul message :
+    « 🔄 Mouvements de personnel : @Islanders » puis une ligne par joueur."""
+    if shm.known_team(team, teams.get(team)) is None:
+        # Un club-école dont l'équipe LNH est inconnue : on le nomme sans deviner.
+        who = f"le club-école **{escape_markdown(teams.get(team) or team)}**"
+    else:
+        who = team_label(team, teams, roles, emojis)
+    lines = [f"🔄 **Mouvements de personnel** : {who}"]
+    lines += [MOVE_LINES[m.direction].format(player=escape_markdown(m.player)) for m in team_moves]
+    return "\n".join(lines)
 
 
 # Le classement : quelques messages que le bot modifie après chaque simulation.
