@@ -35,7 +35,7 @@ Le bot ne sert pas qu'au draft : il anime la ligue toute la saison. `/admin` s'o
 ```
 🏒 Panneau de la ligue
 🏒 Draft : en cours (12 choix faits sur 64)
-🔄 Annonces SHM : transactions, signatures, rachats, ballottages et classement publiés tout seuls
+🔄 Annonces SHM : transactions, signatures, rachats, ballottages, mouvements AHL/NHL et classement publiés tout seuls
    État : ligue lnhs_2 (✅ lu il y a 3 min)
 [🏒 Draft] [🔄 Annonces SHM auto]
 ```
@@ -68,12 +68,12 @@ Le panneau se ferme après 14 minutes (limite de Discord) : refaire `/admin` pou
 
 Si le serveur a une emote pour une équipe, le bot la met devant le nom de l'équipe dans les annonces de transactions et de choix au draft. L'emote doit porter le code ou le nom de l'équipe : `:PIT:`, `:pit:`, `:Penguins:` ou `:Pittsburgh_Penguins:` (pas `:PIT2:`). Rien à régler : le bot les trouve tout seul.
 
-### Annonces SHM automatiques (transactions, ballottage, signatures, rachats, classement)
+### Annonces SHM automatiques (transactions, ballottage, signatures, rachats, mouvements AHL/NHL, classement)
 
 Le bot peut aussi lire lui-même les transactions sur SHM et les annoncer sans que personne n'ait rien à faire.
 
 1. Le bot a son propre compte SHM (voir `SHM_USERNAME` et `SHM_PASSWORD` dans l'installation). Le commissaire de la ligue ajoute ce compte comme **membre de sa ligue, sans équipe**.
-2. Dans le menu de `/admin` : **🔄 Annonces SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir un salon pour chaque sorte d'annonce : transactions (obligatoire), ballottage, rachats et classement. Le salon des **signatures** se choisit juste après **Envoyer**, dans le menu sous le message « C'est branché » (la fenêtre de Discord ne peut pas avoir plus de 5 champs). Le même salon peut servir pour plusieurs. Laisser un salon vide arrête cette sorte d'annonce ; quand on la rallume, seul ce qui arrive ensuite est annoncé.
+2. Dans le menu de `/admin` : **🔄 Annonces SHM auto**. Coller l'adresse de la ligue sur SHM (ex. `https://simulatedhockeymanager.ca/lnhs_2`) et choisir un salon pour chaque sorte d'annonce : transactions (obligatoire), ballottage, rachats et classement. Le salon des **signatures** et celui des **mouvements AHL/NHL** se choisissent juste après **Envoyer**, dans les menus sous le message « C'est branché » (la fenêtre de Discord ne peut pas avoir plus de 5 champs). Le même salon peut servir pour plusieurs. Laisser un salon vide arrête cette sorte d'annonce ; quand on la rallume, seul ce qui arrive ensuite est annoncé.
 3. Le bot essaie tout de suite : s'il ne voit pas la ligue, il le dit et ne change rien. S'il la voit, les transactions déjà sur SHM ne sont **pas** réannoncées : seules les suivantes le seront.
 
 Ensuite, le bot regarde la page **Historique des transactions** de la ligue toutes les 5 minutes et annonce chaque nouvelle transaction, de la plus ancienne à la plus récente, en mentionnant le rôle de chaque équipe :
@@ -113,6 +113,8 @@ Le bot annonce aussi les **rachats** (💸 l'équipe, le joueur et le montant du
 
 Le bot annonce aussi les **signatures de contrat** (✍️ l'équipe, le joueur, la durée et le salaire par saison, et s'il joue dans la LNH ou la LAH), lues sur la même boîte de l'accueil (« X (NHL) a signé un nouveau contrat de 1 000 000$ d'une durée de 2 ans. »). SHM écrit de la même façon une signature et une prolongation. L'annonce va dans le salon des **signatures** (choisi dans le menu qui suit la fenêtre des annonces SHM ; sans salon, rien n'est annoncé), sans notification, avec une image aux couleurs de l'équipe : le nouveau contrat, la position, l'âge et les cotes du joueur (lues sur la page **Effectifs** de l'équipe). Si l'image ne peut pas être faite ou envoyée, l'annonce part en texte. Les signatures déjà sur l'accueil quand on branche la ligue (ou à la mise à jour du bot) ne sont pas annoncées.
 
+Le bot annonce aussi les **mouvements de personnel** (🔄 « X a été monté en NHL », « X a été descendu en AHL » sur la même boîte de l'accueil) : un message par équipe avec une ligne par joueur (⬆️ rappelé de la LAH, ⬇️ renvoyé dans la LAH), sans notification, dans le salon des **mouvements AHL/NHL** (choisi dans le menu qui suit la fenêtre des annonces SHM ; sans salon, rien n'est annoncé). Les juniors montés dans la LAH ne sont pas annoncés. Seules les lignes apparues depuis la lecture d'avant sont annoncées : un joueur qui monte et descend plusieurs fois est annoncé chaque fois, et rien n'est réannoncé après un redémarrage. Si plus de 30 actions arrivent entre deux lectures, un mouvement déjà annoncé depuis moins de 24 heures n'est pas répété.
+
 Le bot peut aussi publier le **classement** de la ligue (Association de l'Est et de l'Ouest) dans un salon, avec une flèche 🟢 ▲ ou 🔴 ▼ pour les places gagnées ou perdues depuis la simulation d'avant. Il modifie ensuite le même message quand le classement change sur SHM, donc après chaque simulation : le salon reste propre. Si le message est effacé à la main, il est republié ; si on change de salon, l'ancien est effacé.
 
 Le menu de `/admin` montre l'état : la ligue suivie, le salon de chaque annonce et la dernière lecture réussie, ou l'erreur. Si SHM ne répond plus pendant une heure, le bot le dit une fois dans le salon, puis dit quand ça remarche. Laisser l'adresse vide arrête les annonces automatiques.
@@ -151,7 +153,7 @@ N'importe qui peut inviter le bot, mais c'est le créateur du bot (le propriéta
 - **Quand un serveur invite le bot**, le bot écrit un mot de bienvenue dans ce serveur (le salon des messages système, sinon le premier salon où il peut écrire) : la configuration se fait avec le créateur du bot, qui a été prévenu, et comment le joindre (lien `SUPPORT_URL` s'il est rempli).
 - **Le créateur reçoit un message privé « Nouveau client ! »** : nom du serveur, nombre de membres, propriétaire du serveur, qui a ajouté le bot (si le bot peut lire le journal du serveur) et un lien de 7 jours pour rejoindre le serveur (si le bot peut créer une invitation), avec un bouton **✅ Activer ce serveur**.
 - **Tant que le serveur n'est pas activé**, `/admin` montre seulement ce message aux admins du serveur. Le créateur active le serveur avec le bouton du message privé, ou en faisant `/admin` dans ce serveur (il lui faut alors la permission « Gérer le serveur » là-bas) : le panneau s'ouvre aussitôt. `/draft`, `/statut`, `/roue` et `/aide` ne sont pas bloqués.
-- **Annonces SHM** (transactions, ballottage, signatures, rachats, classement) : seul le créateur du bot peut les brancher, les changer ou les arrêter (bouton **Annonces SHM auto**). Les admins du serveur voient un message qui leur dit de le contacter.
+- **Annonces SHM** (transactions, ballottage, signatures, rachats, mouvements AHL/NHL, classement) : seul le créateur du bot peut les brancher, les changer ou les arrêter (bouton **Annonces SHM auto**). Les admins du serveur voient un message qui leur dit de le contacter.
 - Les serveurs où le bot était déjà au premier démarrage de cette version sont activés tout seuls, une seule fois. Un serveur qui invite le bot pendant qu'il est éteint est accueilli au démarrage suivant. Le créateur est aussi prévenu quand un serveur retire le bot ou le réinvite.
 
 **Les bugs arrivent aussi en message privé chez le créateur** : dès que le bot écrit une erreur dans son journal, il envoie « 🐞 Le bot a eu un problème » avec ce qui a raté (ex. « Annonces SHM impossibles sur le serveur … ») et le type d'erreur, jamais le détail technique (qui pourrait contenir une adresse ou un mot de passe : il reste dans `bot journal`). Pour ne pas inonder : la même erreur au plus une fois par heure, et au plus 5 messages par heure en tout.

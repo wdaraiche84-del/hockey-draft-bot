@@ -1741,7 +1741,7 @@ def test_shm_status_is_shown_in_the_league_menu(shm_league):
     before, ok, failing = run(scenario())
     assert "État : pas activées" in before
     assert "État : ligue `lnhs_2` (✅ lu à l'instant)" in ok
-    assert "Transactions → #transactions · Ballottage → #transactions · Rachats → #transactions · Signatures → non · Classement → non" in ok
+    assert "Transactions → #transactions · Ballottage → #transactions · Rachats → #transactions · Signatures → non · Mouvements AHL/NHL → non · Classement → non" in ok
     assert "⚠️ Je n'arrive pas à joindre SHM" in failing
 
 
@@ -2283,7 +2283,7 @@ def test_signings_have_their_own_channel_separate_from_buyouts(shm_league):
         await bot.check_shm()
         return i.last, before, chosen.last, menu, stopped.last
     setup, before, chosen, menu, stopped = run(scenario())
-    assert "• Signatures : pas annoncé" in setup and "choisis-le dans le menu juste en dessous" in setup
+    assert "• Signatures : pas annoncé" in setup and "dans les menus juste en dessous" in setup
     assert before == []
     assert chosen.startswith("✅ Les nouvelles signatures de contrat seront annoncées dans #signatures.")
     assert "Rachats → #rachats · Signatures → #signatures" in menu
@@ -2768,3 +2768,178 @@ def test_no_private_message_about_bugs_before_the_bot_runs(welcome):
     finally:
         logging.getLogger("draft_bot").removeHandler(bot.owner_alerts)
     assert william.dms == []
+
+
+# Les mouvements de personnel SHM (montés dans la LNH, descendus dans la LAH), lus sur l'accueil
+
+async def pick_moves(setup, channel, user=None):
+    """Choisit ce salon (None : aucun) dans le menu des mouvements AHL/NHL, sous « C'est branché »."""
+    view = setup.view
+    assert isinstance(view, SigningsView), setup.last
+    i = FakeInteraction(setup.guild, user or setup.user)
+    view.moves_menu._values = [] if channel is None else [channel]
+    if await view.interaction_check(i):
+        await view.moves_chosen(i)
+    return i
+
+
+def up(player):
+    return f"{player} a été monté en NHL"
+
+
+def down(player):
+    return f"{player} a été descendu en AHL"
+
+
+def test_moves_already_on_shm_are_quiet_then_new_ones_are_announced_by_team(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    moves_channel = FakeChannel("mouvements")
+    guild.channels[moves_channel.id] = moves_channel
+    nyi = FakeEmoji("NYI")
+    guild.emojis = [nyi]
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        chosen = await pick_moves(i, moves_channel)
+        # L'accueil contient déjà Rittich, Gauthier, Bjornfot et Gadjovich : jamais annoncés.
+        await bot.check_shm()
+        quiet = list(moves_channel.texts())
+        site.add_home("MTL", "arrow-circle-up", up("Joshua Roy"))
+        site.add_home("NYI", "list", "Alignement mis à jour")
+        site.add_home("MTL", "arrow-circle-down", down("Jake Evans"))
+        site.add_home("BRG", "arrow-circle-up", up("Ethan Bear"))
+        site.add_home("MTL", "graduation-cap", "Owen Beck (JNR) a été monté en AHL")
+        await bot.check_shm()
+        await bot.check_shm()
+        return i.last, chosen.last, quiet
+    setup, chosen, quiet = run(scenario())
+    assert "• Mouvements AHL/NHL : pas annoncé" in setup and "Salon des mouvements AHL/NHL" in setup
+    assert chosen.startswith("✅ Les joueurs rappelés de la LAH ou renvoyés dans la LAH seront annoncés dans "
+                             "#mouvements.")
+    assert quiet == []
+    # Un message par équipe, du plus ancien au plus récent ; BRG est le club-école de NYI (appris sur l'accueil).
+    assert moves_channel.texts() == [
+        f"🔄 **Mouvements de personnel** : {roles['Canadiens'].mention}\n"
+        "⬆️ **Joshua Roy** est rappelé de la LAH.\n⬇️ **Jake Evans** est renvoyé dans la LAH.",
+        f"🔄 **Mouvements de personnel** : {nyi} {roles['Islanders'].mention}\n⬆️ **Ethan Bear** est rappelé de la LAH.",
+    ]
+    assert channel.texts() == []
+    assert all(m == bot_module.NO_PINGS for m in moves_channel.mentions())
+    assert [a for _, _, a, _ in store.log_entries(guild.id)].count("mouvement SHM") == 3
+
+
+def test_a_player_going_up_and_down_again_is_announced_each_time(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await pick_moves(i, channel)
+        await bot.check_shm()
+        for move in (up, down, up):
+            site.add_home("MTL", "arrow-circle-up", move("Joshua Roy"))
+            await bot.check_shm()
+        # Deux fois de suite dans la même lecture aussi.
+        site.add_home("MTL", "arrow-circle-down", down("Joshua Roy"))
+        site.add_home("MTL", "arrow-circle-up", up("Joshua Roy"))
+        await bot.check_shm()
+    run(scenario())
+    texts = channel.texts()
+    assert len(texts) == 4
+    assert [t.count("Joshua Roy") for t in texts] == [1, 1, 1, 2]
+    assert "renvoyé" in texts[1] and texts[3].index("renvoyé") < texts[3].index("rappelé")
+
+
+def test_moves_made_while_the_bot_was_off_are_announced_once(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await pick_moves(i, channel)
+        await bot.check_shm()
+        # Le bot est éteint pendant un mouvement, puis redémarre.
+        site.add_home("MTL", "arrow-circle-up", up("Joshua Roy"))
+        restarted = DraftBot(store, backup_dir=None, shm_client=site)
+        restarted.get_guild = bot.get_guild
+        await restarted.check_shm()
+        await restarted.check_shm()
+        # Plus de 30 actions pendant une panne : les mouvements visibles sont annoncés, mais un
+        # mouvement déjà annoncé il y a moins de 24 heures n'est pas répété.
+        site.add_home("MTL", "arrow-circle-down", down("Jake Evans"))
+        for n in range(30):
+            site.add_home("MTL", "list", f"Alignement mis à jour {n}")
+        site.home[5] = shm.FeedRow("MTL", "arrow-circle-up", up("Joshua Roy"))
+        site.home[6] = shm.FeedRow("MTL", "arrow-circle-down", down("Cole Caufield"))
+        await restarted.check_shm()
+        await restarted.check_shm()
+    run(scenario())
+    texts = channel.texts()
+    assert texts == [f"🔄 **Mouvements de personnel** : {roles['Canadiens'].mention}\n⬆️ **Joshua Roy** est rappelé de la LAH.",
+                     f"🔄 **Mouvements de personnel** : {roles['Canadiens'].mention}\n"
+                     "⬇️ **Cole Caufield** est renvoyé dans la LAH."]
+
+
+def test_moves_are_not_announced_without_a_channel_and_can_be_stopped(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await bot.check_shm()
+        site.add_home("MTL", "arrow-circle-up", up("Joshua Roy"))
+        await bot.check_shm()
+        nothing = list(channel.texts())
+        await pick_moves(i, channel)
+        site.add_home("MTL", "arrow-circle-down", down("Jake Evans"))
+        await bot.check_shm()
+        menu = (await open_panel(bot, guild, admin, draft=False)).last
+        stopped = await pick_moves(i, None)
+        site.add_home("MTL", "arrow-circle-up", up("Cole Caufield"))
+        await bot.check_shm()
+        return nothing, menu, stopped.last
+    nothing, menu, stopped = run(scenario())
+    assert nothing == []
+    assert "Mouvements AHL/NHL → #transactions" in menu
+    assert stopped == "🔕 Les mouvements AHL/NHL ne seront plus annoncés."
+    assert len(channel.texts()) == 1 and "Jake Evans" in channel.texts()[0]
+    assert store.shm_channels(guild.id)["moves"] is None
+
+
+def test_moves_channel_is_for_the_bot_owner_and_must_be_usable(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    locked = FakeChannel("verrouillé", bot_allowed=False)
+    guild.channels[locked.id] = locked
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        refused = await pick_moves(i, locked)
+        stranger = await pick_moves(i, channel, user=FakeMember(guild, [], admin=True))
+        bot.owner_ids = set()
+        other = await pick_moves(i, channel)
+        return refused.last, stranger, other
+    refused, stranger, other = run(scenario())
+    assert refused.startswith("🔒 Le bot ne peut pas écrire dans #verrouillé")
+    assert stranger.sent == []
+    assert "seulement par" in other.last
+    assert store.shm_channels(guild.id)["moves"] is None
+
+
+def test_a_second_server_joining_the_league_does_not_hide_moves_from_the_first(shm_league):
+    bot, store, guild, admin, channel, roles, site = shm_league
+    other_channel = FakeChannel("transactions")
+    other = FakeGuild([FakeRole(name) for name in SHM_ROLES], [other_channel])
+    store.approve_guild(other.id, None)
+    guilds = {guild.id: guild, other.id: other}
+    bot.get_guild = guilds.get
+    other_admin = admin_of(other)
+    bot.owner_ids.add(other_admin.id)
+
+    async def scenario():
+        i, _ = await setup_shm_from_panel(bot, guild, admin, channel, "lnhs_2")
+        await pick_moves(i, channel)
+        await bot.check_shm()
+        site.add_home("MTL", "arrow-circle-up", up("Joshua Roy"))
+        # L'autre serveur se branche à la même ligue entre deux lectures.
+        j, _ = await setup_shm_from_panel(bot, other, other_admin, other_channel, "lnhs_2")
+        await pick_moves(j, other_channel)
+        await bot.check_shm()
+    run(scenario())
+    assert len(channel.texts()) == 1 and "Joshua Roy" in channel.texts()[0]

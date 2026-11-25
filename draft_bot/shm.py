@@ -469,6 +469,62 @@ def signing_key(signing: Signing) -> str:
     return "contrat:" + hashlib.sha256(normalize(signing.text).encode()).hexdigest()[:32]
 
 
+# Les mouvements de personnel : les joueurs montés dans la LNH ou descendus dans la LAH.
+
+MOVED = re.compile(r"^(.+?) a été (monté|descendu) en (NHL|LNH|AHL|LAH)\s*\.?$", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class Move:
+    player: str
+    # « up » : monté dans la LNH ; « down » : descendu dans la LAH.
+    direction: str
+    # Le code de l'équipe LNH, ou celui de son club-école si l'accueil ne dit pas à qui il appartient.
+    team: str
+    text: str
+
+
+def feed_moves(new_rows: list[FeedRow], all_rows: list[FeedRow], farms: dict[str, str]) -> list[Move]:
+    """Les montées dans la LNH et descentes dans la LAH parmi les nouvelles lignes de l'accueil,
+    la plus récente en premier. « Gabriel Eliasson (JNR) a été monté en AHL » (un junior) n'en est pas un."""
+    found = []
+    for row in new_rows:
+        match = MOVED.match(row.text.strip())
+        if not match or not row.team:
+            continue
+        player, verb, league = match.group(1).strip(), match.group(2).lower(), match.group(3).upper()
+        if verb == "monté" and league in ("NHL", "LNH"):
+            direction = "up"
+        elif verb == "descendu" and league in ("AHL", "LAH"):
+            direction = "down"
+        else:
+            continue
+        found.append(Move(player, direction, parent_team(all_rows, player, row.team, farms), row.text))
+    return found
+
+
+def move_key(move: Move) -> str:
+    """L'empreinte d'un mouvement : sert seulement quand le bot n'est pas sûr de ce qui est nouveau."""
+    return "mouvement:" + hashlib.sha256(f"{move.team}|{normalize(move.text)}".encode()).hexdigest()[:32]
+
+
+def feed_new_rows(previous: list[FeedRow], current: list[FeedRow]) -> tuple[list[FeedRow], bool]:
+    """Les lignes de l'accueil apparues depuis la lecture d'avant, la plus récente en premier, et si
+    c'est sûr.
+
+    Sûr : le bas de l'accueil actuel est exactement le haut de l'accueil d'avant (les nouvelles
+    lignes arrivent en haut et poussent les vieilles). Sinon (plus de 30 actions entre deux
+    lectures, ou SHM a changé une ligne) toutes les lignes sont rendues, pas sûres. Sans lecture
+    d'avant, aucune ligne n'est nouvelle."""
+    if not previous:
+        return [], True
+    for start in range(len(current) + 1):
+        rest = current[start:]
+        if rest and rest == previous[:len(rest)]:
+            return current[:start], True
+    return list(current), False
+
+
 def parse_farm(html: str, code: str) -> tuple[str, str] | None:
     """Le club-école d'une équipe d'après sa page « Effectifs » : (code, nom), ou None.
 

@@ -52,6 +52,9 @@ MAX_FILE_BYTES = 2_000_000
 PICK_BUTTON_ID = "draft:faire-mon-choix"
 # Le bot regarde l'historique des transactions SHM de chaque ligue suivie toutes les 5 minutes.
 SHM_CHECK_MINUTES = 5
+# Quand le bot n'est pas sûr de ce qui est nouveau sur l'accueil, il ne répète pas un mouvement
+# déjà annoncé depuis moins de 24 heures.
+MOVES_REPEAT_SECONDS = 24 * 3600
 # Après une longue panne, le bot lit au plus 3 pages SHM (45 transactions) pour rattraper son retard.
 SHM_MAX_PAGES = 3
 # Pour la ligne des joueurs échangés, le bot lit au plus 6 pages « Effectifs » par lecture.
@@ -144,6 +147,8 @@ class DraftBot(discord.Client):
         self.shm_status: defaultdict[int, ShmStatus] = defaultdict(ShmStatus)
         # Club-école -> équipe LNH, appris sur l'accueil ou les pages « Effectifs » de chaque ligue.
         self.shm_farms: defaultdict[str, dict[str, str]] = defaultdict(dict)
+        # Les nouvelles lignes de l'accueil de chaque ligue à la dernière lecture, et si c'est sûr.
+        self.shm_fresh: dict[str, tuple[list[shm.FeedRow], bool]] = {}
         # Les pages « Effectifs » déjà lues pour trouver un club-école, par ligue.
         self.shm_rosters_read: defaultdict[str, set[str]] = defaultdict(set)
         self.tree = app_commands.CommandTree(self)
@@ -722,12 +727,16 @@ class DraftBot(discord.Client):
         claims = shm.feed_claims(feed) if feed is not None else {}
         buyouts = shm.feed_buyouts(feed, self.shm_farms[slug]) if feed is not None else None
         signings = shm.feed_signings(feed, self.shm_farms[slug]) if feed is not None else None
+        fresh, certain = self.shm_fresh.pop(slug, ([], True)) if feed is not None else ([], True)
+        player_moves = shm.feed_moves(fresh, feed, self.shm_farms[slug]) if feed is not None else []
         teams_known = (waivers.teams if waivers is not None else {}) | (teams if trades is not None else {})
         guild_ids = [g for g, _ in followers]
         if buyouts:
             buyouts = await self.find_farms(slug, buyouts, teams_known, guild_ids, self.buyout_to_announce)
         if signings:
             signings = await self.find_farms(slug, signings, teams_known, guild_ids, self.signing_to_announce)
+        if player_moves and any(self.store.shm_channels(g)["moves"] for g in guild_ids):
+            player_moves = await self.find_farms(slug, player_moves, teams_known, guild_ids, lambda m, g: True)
         # Le classement n'est lu que si un serveur veut le publier.
         if any(self.store.shm_channels(guild_id)["standings"] for guild_id, _ in followers):
             try:
@@ -750,6 +759,8 @@ class DraftBot(discord.Client):
                     await self.publish_buyouts(guild_id, channels["buyouts"], buyouts, teams_known)
                 if signings is not None:
                     await self.publish_signings(guild_id, channels["signings"], signings, teams_known, signers)
+                if player_moves and channels["moves"] is not None:
+                    await self.publish_moves(guild_id, channels["moves"], player_moves, teams_known, certain)
                 if standings is not None and channels["standings"] is not None:
                     await self.publish_standings(guild_id, channels["standings"], standings)
                 problems = errors + ([f"Le bot ne peut pas écrire dans {', '.join(locked)}."] if locked else [])
@@ -925,7 +936,7 @@ class DraftBot(discord.Client):
                 log.warning("Image de la signature refusée par Discord (serveur %s) : %s", guild.id, error)
         await channel.send(text, allowed_mentions=NO_PINGS)
 
-    async def read_feed(self, slug: str) -> tuple[list[shm.FeedRow] | None, bool]:
+    async def read_feed(self, slug: str, remember: bool = True) -> tuple[list[shm.FeedRow] | None, bool]:
         """Les « Changements par équipe » de l'accueil (ou None), et s'ils couvrent tout depuis la
         lecture d'avant. Illisible, l'accueil ne bloque ni les transactions ni le ballottage."""
         try:
@@ -933,11 +944,16 @@ class DraftBot(discord.Client):
         except shm.ShmError as error:
             log.warning("Accueil SHM illisible pour la ligue %s : %s", slug, error)
             self.store.set_shm_feed(slug, None)
+            self.shm_fresh.pop(slug, None)
             return None, False
         # Gardé dans la base : après un redémarrage du bot, on sait encore si rien n'a été manqué.
         before = [shm.FeedRow(*row) for row in self.store.shm_feed(slug)]
         complete = shm.feed_follows(before, feed)
-        self.store.set_shm_feed(slug, [[row.team, row.action, row.text] for row in feed])
+        self.shm_fresh[slug] = shm.feed_new_rows(before, feed)
+        # Au branchement d'un serveur, une ligue déjà suivie garde sa lecture d'avant : les autres
+        # serveurs n'y perdent aucun mouvement.
+        if remember or not before:
+            self.store.set_shm_feed(slug, [[row.team, row.action, row.text] for row in feed])
         return feed, complete
 
     @check_shm.before_loop
@@ -1098,6 +1114,39 @@ class DraftBot(discord.Client):
                 self.store.mark_announced(guild_id, key)
             if not primed:
                 self.store.set_shm_buyouts_primed(guild_id)
+        return posted
+
+    async def publish_moves(self, guild_id: int, channel: discord.TextChannel, player_moves: list[shm.Move],
+                            teams: dict[str, str], certain: bool = True) -> int:
+        """Annonce les joueurs montés dans la LNH ou descendus dans la LAH depuis la lecture d'avant :
+        un message par équipe, du plus ancien au plus récent. Rend le nombre de messages envoyés.
+
+        Les mouvements viennent des nouvelles lignes de l'accueil seulement : un joueur qui monte et
+        descend plusieurs fois est annoncé chaque fois. Si le bot n'est pas sûr de ce qui est nouveau
+        (`certain` faux), un mouvement déjà annoncé dans les dernières 24 heures n'est pas répété."""
+        guild = self.get_guild(guild_id)
+        posted = 0
+        async with self.locks[guild_id]:
+            roles, emojis = team_roles(guild), guild_emojis(guild)
+            by_team: dict[str, list[shm.Move]] = {}
+            for move in reversed(player_moves):
+                if not certain:
+                    at = self.store.announced_at(guild_id, shm.move_key(move))
+                    if at is not None and time.time() - at < MOVES_REPEAT_SECONDS:
+                        continue
+                by_team.setdefault(move.team, []).append(move)
+            for team, team_moves in by_team.items():
+                try:
+                    # Pas de notification : les équipes font souvent plusieurs mouvements d'un coup.
+                    await channel.send(moves.moved(team, team_moves, teams, roles, emojis), allowed_mentions=NO_PINGS)
+                except discord.HTTPException:
+                    log.exception("Annonce de mouvements impossible sur le serveur %s", guild_id)
+                    continue
+                posted += 1
+                for move in team_moves:
+                    self.store.mark_announced(guild_id, shm.move_key(move))
+                    self.store.add_log(guild_id, None, "mouvement SHM",
+                                       f"{move.player} ({move.team}, {'LNH' if move.direction == 'up' else 'LAH'})")
         return posted
 
     async def publish_standings(self, guild_id: int, channel: discord.TextChannel, page: shm.StandingsPage) -> None:
@@ -2210,7 +2259,7 @@ def bot_can_attach(channel: discord.TextChannel, guild: discord.Guild) -> bool:
 
 def shm_owner_only(bot: "DraftBot") -> str:
     who = f"**{escape_markdown(bot.owner_name)}**" if bot.owner_name else "le créateur du bot"
-    return (f"🔒 Les annonces SHM (transactions, ballottage, signatures, rachats, classement) sont branchées "
+    return (f"🔒 Les annonces SHM (transactions, ballottage, signatures, rachats, mouvements AHL/NHL, classement) sont branchées "
             f"seulement par {who}, "
             f"le créateur du bot : il doit relier le compte SHM du bot à votre ligue.\n{bot.contact_text()}")
 
@@ -2241,7 +2290,7 @@ class ShmModal(BotModal):
         self.waivers = self.ask("Salon du ballottage", select("waivers", False),
                                 "Laisse vide pour ne pas annoncer le ballottage.")
         self.buyouts = self.ask("Salon des rachats", select("buyouts", False),
-                                "Laisse vide pour ne pas annoncer les rachats. Les signatures : juste après Envoyer.")
+                                "Laisse vide pour ne pas annoncer les rachats. Signatures et mouvements AHL/NHL : après Envoyer.")
         self.standings = self.ask("Salon du classement", select("standings", False),
                                   "Le classement y est publié et mis à jour tout seul. Laisse vide si tu n'en veux pas.")
 
@@ -2257,20 +2306,28 @@ class ShmModal(BotModal):
 
 
 class SigningsView(discord.ui.View):
-    """Le menu du salon des signatures, sous le message « C'est branché » des annonces SHM.
+    """Les menus du salon des signatures et du salon des mouvements AHL/NHL, sous le message
+    « C'est branché » des annonces SHM.
 
-    Il fait partie des annonces SHM automatiques, mais pas de leur fenêtre : Discord y permet au
-    plus 5 champs, déjà tous pris. Choisir aucun salon arrête les signatures."""
+    Ils font partie des annonces SHM automatiques, mais pas de leur fenêtre : Discord y permet au
+    plus 5 champs, déjà tous pris. Choisir aucun salon arrête cette sorte d'annonce."""
 
     def __init__(self, bot: DraftBot, guild_id: int, user_id: int):
         super().__init__(timeout=PANEL_SECONDS)
         self.bot, self.user_id = bot, user_id
-        channel_id = bot.store.shm_channels(guild_id)["signings"]
-        default = [discord.Object(id=channel_id, type=discord.TextChannel)] if channel_id else []
-        self.menu = discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=default,
-                                             min_values=0, max_values=1, placeholder="Salon des signatures")
+        channels = bot.store.shm_channels(guild_id)
+
+        def menu(kind: str, placeholder: str) -> discord.ui.ChannelSelect:
+            channel_id = channels[kind]
+            default = [discord.Object(id=channel_id, type=discord.TextChannel)] if channel_id else []
+            select = discord.ui.ChannelSelect(channel_types=[discord.ChannelType.text], default_values=default,
+                                              min_values=0, max_values=1, placeholder=placeholder)
+            self.add_item(select)
+            return select
+        self.menu = menu("signings", SIGNINGS_BUTTON)
         self.menu.callback = self.chosen
-        self.add_item(self.menu)
+        self.moves_menu = menu("moves", MOVES_BUTTON)
+        self.moves_menu.callback = self.moves_chosen
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.user_id
@@ -2284,20 +2341,50 @@ class SigningsView(discord.ui.View):
             target = interaction.guild.get_channel(self.menu.values[0].id) or False
         await set_signings_channel(self.bot, interaction, target)
 
+    async def moves_chosen(self, interaction: discord.Interaction) -> None:
+        target = None
+        if self.moves_menu.values:
+            target = interaction.guild.get_channel(self.moves_menu.values[0].id) or False
+        await set_moves_channel(self.bot, interaction, target)
+
+
+async def extra_channel_allowed(bot: DraftBot, interaction: discord.Interaction,
+                                target: discord.TextChannel | None | bool, name: str) -> bool:
+    """Vérifie un salon choisi sous « C'est branché ». False : un salon que le bot ne voit pas."""
+    if not bot.is_owner_id(interaction.user.id):
+        await reply(interaction, shm_owner_only(bot))
+        return False
+    if target is False:
+        await reply(interaction, f"{name} introuvable. Le bot voit-il ce salon ? Choisis-en un autre.")
+        return False
+    if target is not None and not bot_can_post(target, interaction.guild):
+        await reply(interaction, f"🔒 Le bot ne peut pas écrire dans {target.mention}. Corrige ses permissions ou "
+                    "choisis un autre salon.")
+        return False
+    return True
+
+
+async def set_moves_channel(bot: DraftBot, interaction: discord.Interaction,
+                            target: discord.TextChannel | None | bool) -> None:
+    """Choisit (ou arrête, avec None) le salon des mouvements AHL/NHL."""
+    guild = interaction.guild
+    if not await extra_channel_allowed(bot, interaction, target, "Salon des mouvements"):
+        return
+    bot.store.set_shm_moves_channel(guild.id, target.id if target else None)
+    bot.store.add_log(guild.id, interaction.user.id, "mouvements SHM", f"#{target.name}" if target else "arrêtés")
+    if target is None:
+        await reply(interaction, "🔕 Les mouvements AHL/NHL ne seront plus annoncés.")
+    else:
+        await reply(interaction, f"✅ Les joueurs rappelés de la LAH ou renvoyés dans la LAH seront annoncés dans "
+                    f"{target.mention}. Ceux déjà sur SHM ne sont pas réannoncés.")
+    await bot.refresh_panels(guild)
+
 
 async def set_signings_channel(bot: DraftBot, interaction: discord.Interaction,
                                target: discord.TextChannel | None | bool) -> None:
     """Choisit (ou arrête, avec None) le salon des signatures. False : un salon que le bot ne voit pas."""
     guild = interaction.guild
-    if not bot.is_owner_id(interaction.user.id):
-        await reply(interaction, shm_owner_only(bot))
-        return
-    if target is False:
-        await reply(interaction, "Salon des signatures introuvable. Le bot voit-il ce salon ? Choisis-en un autre.")
-        return
-    if target is not None and not bot_can_post(target, guild):
-        await reply(interaction, f"🔒 Le bot ne peut pas écrire dans {target.mention}. Corrige ses permissions ou "
-                    "choisis un autre salon.")
+    if not await extra_channel_allowed(bot, interaction, target, "Salon des signatures"):
         return
     bot.store.set_shm_signings_channel(guild.id, target.id if target else None)
     bot.store.add_log(guild.id, interaction.user.id, "signatures SHM", f"#{target.name}" if target else "arrêtées")
@@ -2310,8 +2397,15 @@ async def set_signings_channel(bot: DraftBot, interaction: discord.Interaction,
 
 
 SHM_KIND_NAMES = {"trades": "transactions", "waivers": "ballottage", "buyouts": "rachats",
-                  "signings": "signatures", "standings": "classement"}
+                  "signings": "signatures", "moves": "mouvements AHL/NHL", "standings": "classement"}
 SIGNINGS_BUTTON = "Salon des signatures"
+MOVES_BUTTON = "Salon des mouvements AHL/NHL"
+
+
+def kind_title(kind: str) -> str:
+    """« Mouvements AHL/NHL » : la majuscule au début seulement (capitalize() écrirait « ahl/nhl »)."""
+    name = SHM_KIND_NAMES[kind]
+    return name[:1].upper() + name[1:]
 
 
 async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: str,
@@ -2360,7 +2454,7 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
     except shm.ShmError as error:
         log.warning("Ballottage SHM illisible pour la ligue %s : %s", slug, error)
         waivers = None
-    feed, _ = await bot.read_feed(slug)
+    feed, _ = await bot.read_feed(slug, remember=False)
     standings, standings_error = None, None
     if chosen["standings"] is not None:
         try:
@@ -2392,14 +2486,16 @@ async def setup_shm(bot: DraftBot, interaction: discord.Interaction, address: st
                      f"Les {count} transactions déjà sur SHM ne sont pas réannoncées.")
     for kind in ("trades", "waivers", "buyouts", "standings"):
         target = chosen[kind]
-        lines.append(f"• {SHM_KIND_NAMES[kind].capitalize()} : " + (target.mention if target else "pas annoncé"))
-    signings = bot.shm_channels(guild.id)[0]["signings"]
-    lines.append("• Signatures : " + (signings.mention if signings else "pas annoncé"))
+        lines.append(f"• {kind_title(kind)} : " + (target.mention if target else "pas annoncé"))
+    extra = bot.shm_channels(guild.id)[0]
+    for kind in ("signings", "moves"):
+        lines.append(f"• {kind_title(kind)} : " + (extra[kind].mention if extra[kind] else "pas annoncé"))
     if standings_error:
         lines.append(f"⚠️ Classement pas encore publié : {standings_error} Je réessaie tout seul.")
     lines.append(f"Ce qui arrive sur SHM est annoncé moins de {SHM_CHECK_MINUTES} minutes plus tard. "
                  "Ce qui y était déjà n'est pas réannoncé.")
-    lines.append(f"✍️ **{SIGNINGS_BUTTON}** : choisis-le dans le menu juste en dessous (vide : pas annoncées).")
+    lines.append(f"👇 Il reste 2 choix : ✍️ **{SIGNINGS_BUTTON}** et 🔄 **{MOVES_BUTTON}**, dans les menus juste "
+                 "en dessous (vide : pas annoncé).")
     await reply(interaction, "\n".join(lines), view=SigningsView(bot, guild.id, interaction.user.id))
     await bot.refresh_panels(guild)
 
@@ -2418,7 +2514,7 @@ def shm_text(bot: DraftBot, guild: discord.Guild) -> str:
     parts = []
     for kind, channel_id in bot.store.shm_channels(guild.id).items():
         channel = guild.get_channel(channel_id) if channel_id else None
-        parts.append(f"{SHM_KIND_NAMES[kind].capitalize()} → " + (channel.mention if channel else "non"))
+        parts.append(f"{kind_title(kind)} → " + (channel.mention if channel else "non"))
     return text + "\n　" + " · ".join(parts)
 
 
