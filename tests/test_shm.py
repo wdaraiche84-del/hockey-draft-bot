@@ -249,6 +249,7 @@ class FakeShm:
         self.history_requests = []
         self.expire_next = False
         self.blocked = False
+        self.blocked_requests = 0
         self.user_agents = set()
         app = web.Application()
         app.router.add_get("/login", self.login_page)
@@ -289,7 +290,10 @@ class FakeShm:
     async def history(self, request):
         self.user_agents.add((request.headers.get("User-Agent"), request.headers.get("X-Bot")))
         if self.blocked:
-            return web.Response(status=403, text="<title>Just a moment...</title>", headers={"Server": "cloudflare"})
+            self.blocked_requests += 1
+            return web.Response(status=403, text="<title>Just a moment...</title>",
+                                headers={"Server": "cloudflare", "CF-Ray": "8f1e2d3c4b5a6978-YYZ",
+                                         "cf-mitigated": "challenge"})
         if request.cookies.get("session") != "connecte" or self.expire_next:
             self.expire_next = False
             raise web.HTTPFound("/login")
@@ -390,6 +394,64 @@ def test_unknown_league_and_blocked_bot_are_explained(fake_shm):
     missing, blocked = with_server(fake_shm, scenario)
     assert "n'existe pas" in missing
     assert "anti-robots" in blocked
+
+
+def test_blocked_bot_pauses_then_retries_and_logs_the_cloudflare_ray(fake_shm, monkeypatch, caplog):
+    now = [1000.0]
+    monkeypatch.setattr(shm.time, "monotonic", lambda: now[0])
+
+    async def scenario(client):
+        await client.history("lnhs_2")
+        fake_shm.blocked = True
+        errors = []
+        # Bloqué, puis encore 9 minutes de lectures toutes les 5 minutes : SHM n'est demandé qu'une fois.
+        for _ in range(3):
+            with pytest.raises(shm.ShmBlocked) as error:
+                await client.history("lnhs_2")
+            errors.append(str(error.value))
+            now[0] += 4.5 * 60
+        first = fake_shm.blocked_requests
+        # Après la pause de 10 minutes, un nouvel essai ; encore bloqué, la pause passe à 20 minutes.
+        now[0] += 60
+        with pytest.raises(shm.ShmBlocked):
+            await client.history("lnhs_2")
+        second = fake_shm.blocked_requests
+        now[0] += 19 * 60
+        with pytest.raises(shm.ShmBlocked):
+            await client.history("lnhs_2")
+        still = fake_shm.blocked_requests
+        # Le blocage est levé : la lecture remarche et les pauses repartent de 10 minutes.
+        fake_shm.blocked = False
+        now[0] += 2 * 60
+        page = await client.history("lnhs_2")
+        return errors, first, second, still, page, client.blocks_in_a_row
+    with caplog.at_level("WARNING", logger="draft_bot.shm"):
+        errors, first, second, still, page, in_a_row = with_server(fake_shm, scenario)
+    assert all("anti-robots" in e for e in errors)
+    assert (first, second, still) == (1, 2, 2)
+    assert len(page.trades) == 15 and in_a_row == 0
+    blocked_logs = [r.getMessage() for r in caplog.records if "bloque le bot" in r.getMessage()]
+    assert len(blocked_logs) == 2
+    assert "GET /lnhs_2/trades/history" in blocked_logs[0] and "erreur 403" in blocked_logs[0]
+    assert "8f1e2d3c4b5a6978-YYZ" in blocked_logs[0] and "cf-mitigated=challenge" in blocked_logs[0]
+    assert "Just a moment..." in blocked_logs[0] and "Pause de 10 min" in blocked_logs[0]
+    assert "Pause de 20 min" in blocked_logs[1]
+
+
+def test_blocked_pauses_stop_growing_at_thirty_minutes(fake_shm, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(shm.time, "monotonic", lambda: now[0])
+
+    async def scenario(client):
+        fake_shm.blocked = True
+        pauses = []
+        for _ in range(5):
+            with pytest.raises(shm.ShmBlocked):
+                await client.history("lnhs_2")
+            pauses.append(round((client.blocked_until - now[0]) / 60))
+            now[0] = client.blocked_until + 1
+        return pauses
+    assert with_server(fake_shm, scenario) == [10, 20, 30, 30, 30]
 
 
 def test_unreachable_shm_is_a_clear_error(monkeypatch):
