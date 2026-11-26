@@ -50,6 +50,10 @@ SECONDS_BETWEEN_REQUESTS = 2.0
 REQUEST_SECONDS = 30
 # Après un mot de passe refusé, le bot attend avant de réessayer : SHM bloque les essais répétés.
 LOGIN_RETRY_SECONDS = 30 * 60
+# Quand Cloudflare bloque le bot, il ne redemande rien à SHM pendant un moment (10 min, puis 20,
+# puis 30 au plus) : insister pendant un blocage peut le faire durer plus longtemps.
+BLOCKED_PAUSES = (10 * 60, 20 * 60, 30 * 60)
+BLOCKED_MESSAGE = "SHM bloque le bot pour l'instant (protection anti-robots). Je réessaie tout seul plus tard."
 
 # Les adresses de SHM qui ne sont pas des ligues.
 NOT_LEAGUES = {"home", "login", "logout", "register", "profile", "inbox", "language", "password",
@@ -61,6 +65,10 @@ PICK = re.compile(r"choix\s*de\s*(\d{1,2})\s*(?:re|er|e|eme)?\s*ronde|(\d{1,2})\
 
 class ShmError(Exception):
     """SHM ne donne pas les transactions. Le message s'affiche tel quel aux admins."""
+
+
+class ShmBlocked(ShmError):
+    """Cloudflare (la protection de SHM) refuse le bot ou lui demande de ralentir."""
 
 
 class LoginNeeded(ShmError):
@@ -693,6 +701,8 @@ class ShmClient:
         self.logged_in = False
         self.login_blocked_until = 0.0
         self.login_error = ""
+        self.blocked_until = 0.0
+        self.blocks_in_a_row = 0
 
     async def close(self) -> None:
         if self.session is not None:
@@ -711,6 +721,9 @@ class ShmClient:
 
     async def _request(self, method: str, url: str, **kwargs) -> tuple[str, str]:
         """Rend (adresse finale après les redirections, texte de la page)."""
+        if time.monotonic() < self.blocked_until:
+            # Pendant une pause de blocage, rien n'est envoyé à SHM.
+            raise ShmBlocked(BLOCKED_MESSAGE)
         wait = self.last_request + SECONDS_BETWEEN_REQUESTS - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
@@ -720,10 +733,11 @@ class ShmClient:
                 text = await response.text(errors="replace")
                 if response.status in (403, 429, 503) and ("cloudflare" in response.headers.get("Server", "").lower()
                                                             or "Just a moment" in text):
-                    raise ShmError("SHM bloque le bot pour l'instant (protection anti-robots). "
-                                   "Je réessaie tout seul plus tard.")
+                    self._blocked(method, url, response, text)
+                    raise ShmBlocked(BLOCKED_MESSAGE)
                 if response.status == 429:
-                    raise ShmError("SHM demande au bot de ralentir. Je réessaie tout seul plus tard.")
+                    self._blocked(method, url, response, text)
+                    raise ShmBlocked("SHM demande au bot de ralentir. Je réessaie tout seul plus tard.")
                 if response.status >= 500:
                     raise ShmError(f"SHM ne répond pas bien en ce moment (erreur {response.status}). "
                                    "Je réessaie tout seul plus tard.")
@@ -732,10 +746,24 @@ class ShmClient:
                 if response.status >= 400:
                     raise ShmError(f"SHM refuse la page (erreur {response.status}). Le compte SHM du bot est-il "
                                    "bien membre de cette ligue ?")
+                self.blocks_in_a_row = 0
                 return str(response.url), text
         except (aiohttp.ClientError, asyncio.TimeoutError) as error:
             self.last_request = time.monotonic()
             raise ShmError("Je n'arrive pas à joindre SHM en ce moment. Je réessaie tout seul plus tard.") from error
+
+    def _blocked(self, method: str, url: str, response: aiohttp.ClientResponse, text: str) -> None:
+        """Note le blocage dans le journal, avec ce qu'il faut à un admin de SHM pour le retrouver
+        dans Cloudflare (le code Ray), puis met le bot en pause."""
+        pause = BLOCKED_PAUSES[min(self.blocks_in_a_row, len(BLOCKED_PAUSES) - 1)]
+        self.blocks_in_a_row += 1
+        self.blocked_until = time.monotonic() + pause
+        title = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+        log.warning("SHM bloque le bot : %s %s → erreur %s, Cloudflare Ray %s, cf-mitigated=%s, page « %s ». "
+                    "Pause de %d min sans rien demander à SHM.",
+                    method, urlparse(url).path or "/", response.status, response.headers.get("CF-Ray", "?"),
+                    response.headers.get("cf-mitigated", "-"),
+                    " ".join(title.group(1).split())[:80] if title else "?", pause // 60)
 
     async def login(self) -> None:
         if time.monotonic() < self.login_blocked_until:
